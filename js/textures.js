@@ -517,5 +517,8 @@ export function createTextureAtlas() {
         return preview;
     }
 
+    // 更新世界中的工作台方塊（右鍵點擊開合成介面）
+    // 這裡不做任何事，由 main.js 的右鍵點擊邏輯處理
+
     return { texture, getBlockUVs, canvas, createBlockPreview };
 }

@@ -36,9 +36,15 @@ export const BEDROCK = 16;
 export const GLASS = 17;
 export const STONE_BRICK = 18;
 export const WATER = 19;
+export const CRAFTING_TABLE = 20;
+export const FURNACE = 21;
 
 // 透明方塊（不遮擋相鄰面）
 export const TRANSPARENT_BLOCKS = new Set([AIR, LEAVES, GLASS]);
+
+// 物品類型（非方塊，可存在物品欄但不能放置）
+export const STICK = 100;
+export const COAL = 101;
 
 // 方塊名稱
 export const BLOCK_NAMES = {
@@ -47,7 +53,9 @@ export const BLOCK_NAMES = {
     [BRICK]: '磚塊', [GRAVEL]: '礫石', [SNOW]: '雪',
     [COAL_ORE]: '煤礦', [IRON_ORE]: '鐵礦', [GOLD_ORE]: '金礦', [DIAMOND_ORE]: '鑽石礦',
     [BEDROCK]: '基岩', [GLASS]: '玻璃', [STONE_BRICK]: '石磚', [WATER]: '水',
+    [CRAFTING_TABLE]: '工作台', [FURNACE]: '熔爐',
+    [STICK]: '木棒', [COAL]: '木炭',
 };
 
 // 初始快捷欄方塊
-export const HOTBAR_BLOCKS = [GRASS, DIRT, STONE, COBBLESTONE, WOOD, PLANKS, BRICK, STONE_BRICK, GLASS];
+export const HOTBAR_BLOCKS = [GRASS, DIRT, STONE, COBBLESTONE, WOOD, PLANKS, CRAFTING_TABLE, STONE_BRICK, GLASS];

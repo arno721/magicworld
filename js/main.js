@@ -4,7 +4,7 @@ import { World } from './world.js';
 import { Player } from './player.js';
 import { Inventory } from './inventory.js';
 import { MagicSystem } from './magic.js';
-import { HOTBAR_BLOCKS, HOTBAR_SIZE, BLOCK_NAMES, AIR, REACH_DISTANCE, WORLD_SIZE_X, WORLD_SIZE_Z, STONE, DIRT, GRASS, COBBLESTONE, WOOD, PLANKS, SAND, GRAVEL, BRICK, STONE_BRICK, GLASS } from './constants.js';
+import { HOTBAR_BLOCKS, HOTBAR_SIZE, BLOCK_NAMES, AIR, REACH_DISTANCE, WORLD_SIZE_X, WORLD_SIZE_Z, STONE, DIRT, GRASS, COBBLESTONE, WOOD, PLANKS, SAND, GRAVEL, BRICK, STONE_BRICK, GLASS, CRAFTING_TABLE } from './constants.js';
 
 const container = document.getElementById('canvas-container');
 const loadingEl = document.getElementById('loading');
@@ -77,7 +77,11 @@ window.addEventListener('wheel', (e) => {
 window.addEventListener('mousedown', (e) => {
     if (!isLocked) return;
     if (e.button === 0) destroyBlock();
-    else if (e.button === 2) { placeBlock(); e.preventDefault(); }
+    else if (e.button === 2) {
+        if (magic.active) { magic.cast(); }
+        else { placeBlock(); }
+        e.preventDefault();
+    }
 });
 window.addEventListener('contextmenu', (e) => { if (isLocked) e.preventDefault(); });
 document.addEventListener('pointerlockchange', () => {
@@ -148,9 +152,11 @@ function destroyBlock() {
             world.setBlock(bp.x, bp.y, bp.z, AIR);
             world.updateDirtyChunks();
             inventory.addBlock(block, 1);
-            showBlockIndicator('破坏: ' + (BLOCK_NAMES[block] || '方块'));
+            showBlockIndicator('破壞: ' + (BLOCK_NAMES[block] || '方塊') + ` (×${inventory.countBlock(block)})`);
             buildHotbar(world.createBlockPreview);
         }
+    } else {
+        showBlockIndicator('⚡ 未擊中方塊');
     }
 }
 
@@ -232,12 +238,15 @@ async function start() {
             loadText.textContent = text + ` (${Math.round(progress * 100)}%)`;
         });
 
-        // 初始物品
-        inventory.addBlock(PLANKS, 16);
-        inventory.addBlock(COBBLESTONE, 16);
+        // 初始物品（對應所有快捷欄）
+        inventory.addBlock(GRASS, 8);
         inventory.addBlock(DIRT, 16);
         inventory.addBlock(STONE, 16);
+        inventory.addBlock(COBBLESTONE, 16);
         inventory.addBlock(WOOD, 8);
+        inventory.addBlock(PLANKS, 16);
+        inventory.addBlock(CRAFTING_TABLE, 4);
+        inventory.addBlock(STONE_BRICK, 8);
         inventory.addBlock(GLASS, 8);
 
         buildHotbar(world.createBlockPreview);
