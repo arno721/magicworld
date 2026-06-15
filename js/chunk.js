@@ -118,26 +118,29 @@ export class Chunk {
                         const nwy = ly + n.dy;
                         const nwz = wz + n.dz;
                         const neighborBlock = this.getBlockWorld(nwx, nwy, nwz);
-                        // 不渲染被實心方塊遮擋的面
-                        if (neighborBlock !== AIR && neighborBlock !== undefined && neighborBlock !== LEAVES) continue;
-                        // 優化：兩個樹葉相鄰不渲染內部面
-                        if (block === LEAVES && neighborBlock === LEAVES) continue;
-                        {
-                            let c1, c2, c3, c4;
-                            if (colorInfo.uniform) {
-                                c1 = c2 = c3 = c4 = colorInfo.color;
-                            } else {
-                                if (n.faceKey === 'top') c1 = c2 = c3 = c4 = colorInfo.top;
-                                else if (n.faceKey === 'bottom') c1 = c2 = c3 = c4 = colorInfo.bottom;
-                                else {
-                                    c1 = colorInfo.sideTop;
-                                    c2 = colorInfo.sideTop;
-                                    c3 = colorInfo.sideBottom;
-                                    c4 = colorInfo.sideBottom;
-                                }
-                            }
-                            addFace(wx, ly, wz, n.nx, n.ny, n.nz, c1, c2, c3, c4);
+
+                        // 修复：只有空气和树叶才视为“透明”，需要渲染面
+                        // 其他所有方块（包括石头、泥土、木头等）都会遮挡面
+                        if (neighborBlock !== AIR && neighborBlock !== LEAVES) {
+                            continue;
                         }
+
+                        // 确定面的四个顶点颜色
+                        let c1, c2, c3, c4;
+                        if (colorInfo.uniform) {
+                            c1 = c2 = c3 = c4 = colorInfo.color;
+                        } else {
+                            if (n.faceKey === 'top') c1 = c2 = c3 = c4 = colorInfo.top;
+                            else if (n.faceKey === 'bottom') c1 = c2 = c3 = c4 = colorInfo.bottom;
+                            else {
+                                // 侧面：上两条边用 sideTop，下两条边用 sideBottom
+                                c1 = colorInfo.sideTop;
+                                c2 = colorInfo.sideTop;
+                                c3 = colorInfo.sideBottom;
+                                c4 = colorInfo.sideBottom;
+                            }
+                        }
+                        addFace(wx, ly, wz, n.nx, n.ny, n.nz, c1, c2, c3, c4);
                     }
                 }
             }
