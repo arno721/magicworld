@@ -88,6 +88,18 @@
         #hud .stat-bar .icon { font-size: 18px; text-shadow: 0 0 4px rgba(0,0,0,0.8); }
         #hud .stat-bar .icon.lost { opacity: 0.25; }
 
+        #mana-bar { position: fixed; bottom: 75px; right: 20px; z-index: 15; pointer-events: none; }
+        #mana-bar .bar-bg { width: 120px; height: 10px; background: rgba(0,0,0,0.6); border-radius: 5px; overflow: hidden; }
+        #mana-bar .bar-fill { height: 100%; background: linear-gradient(90deg, #4488ff, #66bbff); border-radius: 5px; transition: width 0.2s; }
+        #mana-bar .label { color: #8cf; font-size: 11px; text-shadow: 0 0 4px rgba(0,0,0,0.9); text-align: right; margin-bottom: 2px; }
+
+        #spell-hud {
+            position: fixed; bottom: 55px; left: 50%; transform: translateX(-50%); z-index: 15;
+            pointer-events: none; color: #c8aaff; font-size: 14px; text-shadow: 0 0 8px rgba(0,0,0,0.9);
+            background: rgba(0,0,0,0.5); padding: 4px 14px; border-radius: 12px;
+            border: 1px solid rgba(200,170,255,0.3); display: none;
+        }
+
         #death-screen {
             position: fixed; inset: 0; z-index: 200; background: rgba(150,0,0,0.7);
             display: none; flex-direction: column; align-items: center; justify-content: center;
@@ -108,12 +120,17 @@
     <div class="line v"></div>
     <div class="dot"></div>
 </div>
-<div id="hint">點擊畫面開始遊戲<br><small>WASD 移動 · 空白鍵跳躍 · 左鍵破壞 · 右鍵放置 · 1-9 選方塊 · 滾輪切換</small></div>
+<div id="hint">點擊畫面開始遊戲<br><small>WASD移動 · 空白跳躍 · Shift衝刺 · 左鍵破壞 · 右鍵放置 · 1-9選方塊 · M魔法模式 · C選法術 · F施法</small></div>
 <div id="block-indicator"></div>
 <div id="hud">
     <div class="stat-bar" id="health-bar"></div>
     <div class="stat-bar" id="food-bar"></div>
 </div>
+<div id="mana-bar">
+    <div class="label">魔力 <span id="mana-text">100/100</span></div>
+    <div class="bar-bg"><div class="bar-fill" id="mana-fill" style="width:100%"></div></div>
+</div>
+<div id="spell-hud"></div>
 <div id="hotbar"></div>
 <div id="death-screen">
     <span>💀 你死了</span>

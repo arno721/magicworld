@@ -3,6 +3,7 @@ import { PointerLockControls } from 'three/addons/controls/PointerLockControls.j
 import { World } from './world.js';
 import { Player } from './player.js';
 import { Inventory } from './inventory.js';
+import { MagicSystem } from './magic.js';
 import { HOTBAR_BLOCKS, HOTBAR_SIZE, BLOCK_NAMES, AIR, REACH_DISTANCE, WORLD_SIZE_X, WORLD_SIZE_Z, STONE, DIRT, GRASS, COBBLESTONE, WOOD, PLANKS, SAND, GRAVEL, BRICK, STONE_BRICK, GLASS } from './constants.js';
 
 const container = document.getElementById('canvas-container');
@@ -63,6 +64,9 @@ window.addEventListener('keydown', (e) => {
     if (e.code >= 'Digit1' && e.code <= 'Digit9') selectSlot(parseInt(e.code.replace('Digit','')) - 1);
     if (e.code === 'Digit0') selectSlot(8);
     if (e.code === 'Space') e.preventDefault();
+    if (e.code === 'KeyM') { magic.toggle(); e.preventDefault(); }
+    if (e.code === 'KeyC') { if (magic.active) magic.cycleSpell(e.shiftKey ? -1 : 1); e.preventDefault(); }
+    if (e.code === 'KeyF') { magic.cast(); e.preventDefault(); }
 });
 window.addEventListener('keyup', (e) => { keys[e.code] = false; });
 window.addEventListener('wheel', (e) => {
@@ -215,6 +219,7 @@ scene.add(controls.getObject());
 const world = new World(scene);
 const player = new Player(camera, world);
 const inventory = new Inventory(36, HOTBAR_SIZE);
+const magic = new MagicSystem(world, player, camera, scene, inventory);
 
 async function start() {
     try {
@@ -255,6 +260,8 @@ async function start() {
             requestAnimationFrame(animate);
             const delta = clock.getDelta();
             if (isLocked) player.update(delta, getInput());
+            magic.update(delta);
+            magic.updateLights();
             updateHUD();
             world.updateDirtyChunks();
             renderer.render(scene, camera);
