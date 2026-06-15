@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { World } from './world.js';
 import { Player } from './player.js';
-import { HOTBAR_BLOCKS, HOTBAR_SIZE, BLOCK_COLORS, BLOCK_NAMES, AIR, REACH_DISTANCE, WORLD_SIZE_X, WORLD_SIZE_Z } from './constants.js';
+import { HOTBAR_BLOCKS, HOTBAR_SIZE, BLOCK_NAMES, AIR, REACH_DISTANCE, WORLD_SIZE_X, WORLD_SIZE_Z } from './constants.js';
 
 const container = document.getElementById('canvas-container');
 const loadingEl = document.getElementById('loading');
@@ -27,7 +27,7 @@ function showBlockIndicator(msg) {
     blockIndicator._timeout = setTimeout(() => { blockIndicator.style.opacity = '0'; }, 1200);
 }
 
-function buildHotbar() {
+function buildHotbar(previewFn) {
     hotbarEl.innerHTML = '';
     for (let i = 0; i < HOTBAR_SIZE; i++) {
         const blockType = HOTBAR_BLOCKS[i];
@@ -36,9 +36,12 @@ function buildHotbar() {
         slot.dataset.index = i;
         const preview = document.createElement('div');
         preview.className = 'block-preview';
-        const colorInfo = BLOCK_COLORS[blockType] || BLOCK_COLORS[3];
-        const col = colorInfo.all || colorInfo.top || [0.5, 0.5, 0.5];
-        preview.style.backgroundColor = `rgb(${Math.round(col[0]*255)},${Math.round(col[1]*255)},${Math.round(col[2]*255)})`;
+        if (previewFn) {
+            const canvas = previewFn(blockType, 40);
+            canvas.style.width = '100%';
+            canvas.style.height = '100%';
+            preview.appendChild(canvas);
+        }
         preview.title = BLOCK_NAMES[blockType] || '方块';
         slot.appendChild(preview);
         const num = document.createElement('span');
@@ -140,9 +143,9 @@ container.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87CEEB);
-scene.fog = new THREE.Fog(0x87CEEB, 40, 90);
+scene.fog = new THREE.Fog(0x87CEEB, 60, 160);
 
-const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 150);
+const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 250);
 
 const ambient = new THREE.AmbientLight(0x8899bb, 0.9);
 scene.add(ambient);
@@ -151,10 +154,10 @@ sun.position.set(60, 80, 40);
 sun.castShadow = true;
 sun.shadow.mapSize.width = 2048;
 sun.shadow.mapSize.height = 2048;
-sun.shadow.camera.left = -80;
-sun.shadow.camera.right = 80;
-sun.shadow.camera.top = 80;
-sun.shadow.camera.bottom = -80;
+sun.shadow.camera.left = -100;
+sun.shadow.camera.right = 100;
+sun.shadow.camera.top = 100;
+sun.shadow.camera.bottom = -100;
 sun.shadow.bias = -0.0003;
 scene.add(sun);
 scene.add(new THREE.HemisphereLight(0x8899cc, 0x554433, 0.5));
@@ -168,17 +171,16 @@ const player = new Player(camera, world);
 
 async function start() {
     try {
-        buildHotbar();
-
         loadText.textContent = '生成地形...';
         await new Promise(r => setTimeout(r, 50));
         await new Promise(r => requestAnimationFrame(r));
 
-        let totalFaces = 0;
-        world.generateAll((progress, text) => {
+        await world.generateAll((progress, text) => {
             loadBar.style.width = Math.round(progress * 100) + '%';
-            loadText.textContent = text;
+            loadText.textContent = text + ` (${Math.round(progress * 100)}%)`;
         });
+
+        buildHotbar(world.createBlockPreview);
 
         const sx = Math.floor(WORLD_SIZE_X / 2);
         const sz = Math.floor(WORLD_SIZE_Z / 2);
@@ -187,19 +189,6 @@ async function start() {
         player.position.set(sx, sy, sz);
         player.velocity.set(0, 0, 0);
         player.camera.position.set(sx, sy + 1.6, sz);
-
-        // 除錯資訊
-        for (const chunk of world.chunks.values()) {
-            if (chunk.mesh) {
-                const geo = chunk.mesh.geometry;
-                totalFaces += geo.attributes.position.count / 3;
-            }
-        }
-        const dbg = document.createElement('div');
-        dbg.id = 'debug';
-        dbg.style.cssText = 'position:fixed;top:10px;left:10px;z-index:999;color:#fff;background:rgba(0,0,0,0.8);padding:10px;font-size:13px;font-family:monospace;pointer-events:none;';
-        dbg.innerHTML = `Chunks: ${world.chunks.size}<br>Faces: ${totalFaces}<br>Cam: (${camera.position.x.toFixed(1)}, ${camera.position.y.toFixed(1)}, ${camera.position.z.toFixed(1)})<br>SurfaceY: ${sy-2}`;
-        document.body.appendChild(dbg);
 
         await new Promise(r => setTimeout(r, 400));
         loadingEl.classList.add('hidden');

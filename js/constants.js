@@ -1,8 +1,8 @@
-// 世界与方块常量
+// 世界與方塊常量
 export const CHUNK_SIZE = 16;
-export const WORLD_HEIGHT = 64;
-export const CHUNKS_X = 5;
-export const CHUNKS_Z = 5;
+export const WORLD_HEIGHT = 96;
+export const CHUNKS_X = 9;
+export const CHUNKS_Z = 9;
 export const WORLD_SIZE_X = CHUNKS_X * CHUNK_SIZE;
 export const WORLD_SIZE_Z = CHUNKS_Z * CHUNK_SIZE;
 export const GRAVITY = 24;
@@ -13,8 +13,9 @@ export const PLAYER_HEIGHT = 1.75;
 export const PLAYER_EYE_HEIGHT = 1.6;
 export const REACH_DISTANCE = 7;
 export const PLAYER_HALF_W = PLAYER_WIDTH / 2;
+export const HOTBAR_SIZE = 9;
 
-// 方块类型
+// 方塊類型
 export const AIR = 0;
 export const GRASS = 1;
 export const DIRT = 2;
@@ -27,27 +28,26 @@ export const COBBLESTONE = 8;
 export const BRICK = 9;
 export const GRAVEL = 10;
 export const SNOW = 11;
+export const COAL_ORE = 12;
+export const IRON_ORE = 13;
+export const GOLD_ORE = 14;
+export const DIAMOND_ORE = 15;
+export const BEDROCK = 16;
+export const GLASS = 17;
+export const STONE_BRICK = 18;
+export const WATER = 19;
 
-export const BLOCK_COLORS = {
-    [GRASS]: { top: [0.35, 0.56, 0.20], sideTop: [0.35, 0.56, 0.20], sideBottom: [0.52, 0.39, 0.10], bottom: [0.52, 0.39, 0.10] },
-    [DIRT]: { all: [0.50, 0.36, 0.10] },
-    [STONE]: { all: [0.48, 0.48, 0.48] },
-    [WOOD]: { all: [0.65, 0.44, 0.22], top: [0.60, 0.40, 0.18] },
-    [LEAVES]: { all: [0.18, 0.42, 0.10] },
-    [SAND]: { all: [0.88, 0.80, 0.58] },
-    [PLANKS]: { all: [0.70, 0.50, 0.24] },
-    [COBBLESTONE]: { all: [0.38, 0.38, 0.38] },
-    [BRICK]: { all: [0.58, 0.28, 0.22] },
-    [GRAVEL]: { all: [0.44, 0.40, 0.38] },
-    [SNOW]: { all: [0.94, 0.94, 0.96] },
-};
+// 透明方塊（不遮擋相鄰面）
+export const TRANSPARENT_BLOCKS = new Set([AIR, LEAVES, GLASS]);
 
+// 方塊名稱
 export const BLOCK_NAMES = {
     [GRASS]: '草方塊', [DIRT]: '泥土', [STONE]: '石頭', [WOOD]: '原木',
     [LEAVES]: '樹葉', [SAND]: '沙子', [PLANKS]: '木材', [COBBLESTONE]: '鵝卵石',
     [BRICK]: '磚塊', [GRAVEL]: '礫石', [SNOW]: '雪',
+    [COAL_ORE]: '煤礦', [IRON_ORE]: '鐵礦', [GOLD_ORE]: '金礦', [DIAMOND_ORE]: '鑽石礦',
+    [BEDROCK]: '基岩', [GLASS]: '玻璃', [STONE_BRICK]: '石磚', [WATER]: '水',
 };
 
-// 初始快捷栏方块
-export const HOTBAR_BLOCKS = [GRASS, DIRT, STONE, WOOD, PLANKS, COBBLESTONE, BRICK, SAND, GRAVEL];
-export const HOTBAR_SIZE = 9;
+// 初始快捷欄方塊
+export const HOTBAR_BLOCKS = [GRASS, DIRT, STONE, COBBLESTONE, WOOD, PLANKS, BRICK, STONE_BRICK, GLASS];

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CHUNK_SIZE, WORLD_HEIGHT, AIR, LEAVES, BLOCK_COLORS } from './constants.js';
+import { CHUNK_SIZE, WORLD_HEIGHT, AIR, LEAVES, TRANSPARENT_BLOCKS } from './constants.js';
 
 export class Chunk {
     constructor(cx, cz, world) {
@@ -28,7 +28,6 @@ export class Chunk {
         this.dirty = true;
     }
 
-    // 获取世界坐标下的方块，自动处理边界
     getBlockWorld(wx, wy, wz) {
         const lx = wx - this.originX;
         const lz = wz - this.originZ;
@@ -48,51 +47,35 @@ export class Chunk {
 
         const positions = [];
         const normals = [];
-        const colors = [];
+        const uvs = [];
 
-        const addFace = (fx, fy, fz, nx, ny, nz, c1, c2, c3, c4) => {
-            const addVert = (vx, vy, vz, cx, cy, cz) => {
-                positions.push(vx, vy, vz);
-                normals.push(nx, ny, nz);
-                colors.push(cx, cy, cz);
-            };
+        const addFace = (fx, fy, fz, nx, ny, nz, uv) => {
+            const { u, v, u2, v2 } = uv;
+            // Order: bottom-left, bottom-right, top-right, top-left
+            let v1, v2c, v3, v4;
             if (ny !== 0) {
                 const y = fy + (ny > 0 ? 1 : 0);
-                addVert(fx, y, fz, ...c1);
-                addVert(fx + 1, y, fz, ...c2);
-                addVert(fx + 1, y, fz + 1, ...c3);
-                addVert(fx, y, fz, ...c1);
-                addVert(fx + 1, y, fz + 1, ...c3);
-                addVert(fx, y, fz + 1, ...c4);
+                v1 = [fx, y, fz]; v2c = [fx + 1, y, fz]; v3 = [fx + 1, y, fz + 1]; v4 = [fx, y, fz + 1];
             } else if (nz !== 0) {
                 const z = fz + (nz > 0 ? 1 : 0);
-                addVert(fx, fy, z, ...c1);
-                addVert(fx + 1, fy, z, ...c2);
-                addVert(fx + 1, fy + 1, z, ...c3);
-                addVert(fx, fy, z, ...c1);
-                addVert(fx + 1, fy + 1, z, ...c3);
-                addVert(fx, fy + 1, z, ...c4);
+                v1 = [fx, fy, z]; v2c = [fx + 1, fy, z]; v3 = [fx + 1, fy + 1, z]; v4 = [fx, fy + 1, z];
             } else {
                 const x = fx + (nx > 0 ? 1 : 0);
-                addVert(x, fy, fz, ...c1);
-                addVert(x, fy, fz + 1, ...c2);
-                addVert(x, fy + 1, fz + 1, ...c3);
-                addVert(x, fy, fz, ...c1);
-                addVert(x, fy + 1, fz + 1, ...c3);
-                addVert(x, fy + 1, fz, ...c4);
+                v1 = [x, fy, fz]; v2c = [x, fy, fz + 1]; v3 = [x, fy + 1, fz + 1]; v4 = [x, fy + 1, fz];
             }
-        };
 
-        const getBlockColorInfo = (blockType) => {
-            const info = BLOCK_COLORS[blockType] || BLOCK_COLORS[3];
-            if (info.all) return { uniform: true, color: info.all };
-            return {
-                uniform: false,
-                top: info.top || [0.5,0.5,0.5],
-                sideTop: info.sideTop || [0.5,0.5,0.5],
-                sideBottom: info.sideBottom || [0.5,0.5,0.5],
-                bottom: info.bottom || [0.5,0.5,0.5],
-            };
+            const verts = [v1, v2c, v3, v1, v3, v4];
+            const uvVerts = [
+                [u, v], [u2, v], [u2, v2],
+                [u, v], [u2, v2], [u, v2],
+            ];
+
+            for (let i = 0; i < 6; i++) {
+                const p = verts[i];
+                positions.push(p[0], p[1], p[2]);
+                normals.push(nx, ny, nz);
+                uvs.push(uvVerts[i][0], uvVerts[i][1]);
+            }
         };
 
         for (let lx = 0; lx < CHUNK_SIZE; lx++) {
@@ -102,7 +85,6 @@ export class Chunk {
                     if (block === AIR) continue;
                     const wx = this.originX + lx;
                     const wz = this.originZ + lz;
-                    const colorInfo = getBlockColorInfo(block);
 
                     const neighbors = [
                         { dx: 0, dy: 1, dz: 0, nx: 0, ny: 1, nz: 0, faceKey: 'top' },
@@ -119,27 +101,11 @@ export class Chunk {
                         const nwz = wz + n.dz;
                         const neighborBlock = this.getBlockWorld(nwx, nwy, nwz);
 
-                        // 跳过被實心方塊遮擋的面
-                        if (neighborBlock !== AIR && neighborBlock !== undefined && neighborBlock !== LEAVES) continue;
-                        // 優化：兩個樹葉相鄰時不渲染內部面
-                        if (block === LEAVES && neighborBlock === LEAVES) continue;
+                        if (neighborBlock !== undefined && !TRANSPARENT_BLOCKS.has(neighborBlock)) continue;
+                        if (block === neighborBlock && TRANSPARENT_BLOCKS.has(block)) continue;
 
-                        // 确定面的四个顶点颜色
-                        let c1, c2, c3, c4;
-                        if (colorInfo.uniform) {
-                            c1 = c2 = c3 = c4 = colorInfo.color;
-                        } else {
-                            if (n.faceKey === 'top') c1 = c2 = c3 = c4 = colorInfo.top;
-                            else if (n.faceKey === 'bottom') c1 = c2 = c3 = c4 = colorInfo.bottom;
-                            else {
-                                // 侧面：上两条边用 sideTop，下两条边用 sideBottom
-                                c1 = colorInfo.sideTop;
-                                c2 = colorInfo.sideTop;
-                                c3 = colorInfo.sideBottom;
-                                c4 = colorInfo.sideBottom;
-                            }
-                        }
-                        addFace(wx, ly, wz, n.nx, n.ny, n.nz, c1, c2, c3, c4);
+                        const uv = this.world.getBlockUVs(block, n.faceKey);
+                        addFace(wx, ly, wz, n.nx, n.ny, n.nz, uv);
                     }
                 }
             }
@@ -153,10 +119,13 @@ export class Chunk {
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
         geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-        geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+        geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
         geometry.computeBoundingSphere();
 
-        const material = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+        const material = new THREE.MeshLambertMaterial({
+            map: this.world.textureAtlas,
+            side: THREE.DoubleSide,
+        });
         this.mesh = new THREE.Mesh(geometry, material);
         this.mesh.position.set(0, 0, 0);
         this.mesh.castShadow = true;
