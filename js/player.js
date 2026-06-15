@@ -8,17 +8,26 @@ export class Player {
         this.position = new THREE.Vector3(WORLD_SIZE_X / 2, 40, WORLD_SIZE_Z / 2);
         this.velocity = new THREE.Vector3(0, 0, 0);
         this.onGround = false;
+        this.wasOnGround = false;
+        this.fallStartY = this.position.y;
         this.camera.position.set(this.position.x, this.position.y + PLAYER_EYE_HEIGHT, this.position.z);
+
+        // 生存屬性
+        this.health = 20;
+        this.maxHealth = 20;
+        this.food = 20;
+        this.maxFood = 20;
+        this.alive = true;
+        this.foodTimer = 0;
+        this.damageTimer = 0;
+        this.respawnPos = new THREE.Vector3(WORLD_SIZE_X / 2, 40, WORLD_SIZE_Z / 2);
     }
 
     getAABB(pos) {
         return {
-            minX: pos.x - PLAYER_HALF_W,
-            maxX: pos.x + PLAYER_HALF_W,
-            minY: pos.y,
-            maxY: pos.y + PLAYER_HEIGHT,
-            minZ: pos.z - PLAYER_HALF_W,
-            maxZ: pos.z + PLAYER_HALF_W,
+            minX: pos.x - PLAYER_HALF_W, maxX: pos.x + PLAYER_HALF_W,
+            minY: pos.y, maxY: pos.y + PLAYER_HEIGHT,
+            minZ: pos.z - PLAYER_HALF_W, maxZ: pos.z + PLAYER_HALF_W,
         };
     }
 
@@ -46,8 +55,65 @@ export class Player {
         return false;
     }
 
+    damage(amount) {
+        if (!this.alive || this.damageTimer > 0) return;
+        this.health = Math.max(0, this.health - amount);
+        this.damageTimer = 0.5;
+        if (this.health <= 0) {
+            this.health = 0;
+            this.alive = false;
+            document.getElementById('death-screen').style.display = 'flex';
+            document.exitPointerLock();
+        }
+    }
+
+    heal(amount) {
+        if (!this.alive) return;
+        this.health = Math.min(this.maxHealth, this.health + amount);
+    }
+
+    eat(amount) {
+        this.food = Math.min(this.maxFood, this.food + amount);
+    }
+
+    respawn() {
+        this.alive = true;
+        this.health = 20;
+        this.food = 20;
+        this.velocity.set(0, 0, 0);
+        this.onGround = false;
+        this.position.copy(this.respawnPos);
+        this.camera.position.set(this.position.x, this.position.y + PLAYER_EYE_HEIGHT, this.position.z);
+        document.getElementById('death-screen').style.display = 'none';
+    }
+
     update(deltaTime, input) {
+        if (!this.alive) return;
+
         const dt = Math.min(deltaTime, 0.2);
+
+        if (this.damageTimer > 0) this.damageTimer -= dt;
+
+        // 飢餓消耗與恢復
+        this.foodTimer += dt;
+        const isSprinting = input.sprint && this.food > 6;
+        if (isSprinting) {
+            this.foodTimer += dt * 0.5;
+        }
+        if (this.foodTimer > 10) {
+            this.foodTimer = 0;
+            if (this.food > 0) {
+                this.food = Math.max(0, this.food - 1);
+            }
+        }
+        // 飢餓傷害
+        if (this.food <= 0) {
+            this.damage(1);
+        }
+        // 食物恢復生命
+        if (this.food > 18 && this.health < this.maxHealth && this.health > 0) {
+            this.heal(0.5);
+        }
 
         const forward = new THREE.Vector3();
         this.camera.getWorldDirection(forward);
@@ -63,8 +129,9 @@ export class Player {
         if (input.right) moveDir.add(right);
         if (moveDir.length() > 1) moveDir.normalize();
 
-        this.velocity.x = moveDir.x * MOVE_SPEED;
-        this.velocity.z = moveDir.z * MOVE_SPEED;
+        const speed = isSprinting ? MOVE_SPEED * 1.5 : MOVE_SPEED;
+        this.velocity.x = moveDir.x * speed;
+        this.velocity.z = moveDir.z * speed;
 
         if (!this.onGround) {
             this.velocity.y -= GRAVITY * dt;
@@ -80,11 +147,16 @@ export class Player {
 
         const newPos = this.position.clone();
 
-        // Y 轴
+        // Y 軸
         newPos.y += this.velocity.y * dt;
         let aabb = this.getAABB(newPos);
         if (this.checkCollision(aabb)) {
             if (this.velocity.y < 0) {
+                // 掉落傷害
+                const fallDist = this.fallStartY - newPos.y;
+                if (fallDist > 4 && !this.wasOnGround) {
+                    this.damage(Math.floor((fallDist - 3) * 2));
+                }
                 newPos.y = Math.floor(this.position.y);
                 aabb = this.getAABB(new THREE.Vector3(newPos.x, newPos.y, newPos.z));
                 if (this.checkCollision(aabb)) newPos.y = this.position.y;
@@ -98,8 +170,13 @@ export class Player {
             this.onGround = false;
         }
 
+        // 記錄開始掉落的 Y 位置
+        if (this.wasOnGround && !this.onGround && this.velocity.y < 0) {
+            this.fallStartY = this.position.y;
+        }
+
         const savedY = newPos.y;
-        // X 轴
+        // X 軸
         newPos.x += this.velocity.x * dt;
         aabb = this.getAABB(new THREE.Vector3(newPos.x, savedY, newPos.z));
         if (this.checkCollision(aabb)) {
@@ -107,7 +184,7 @@ export class Player {
             this.velocity.x = 0;
         }
 
-        // Z 轴
+        // Z 軸
         newPos.z += this.velocity.z * dt;
         aabb = this.getAABB(new THREE.Vector3(newPos.x, savedY, newPos.z));
         if (this.checkCollision(aabb)) {
@@ -123,6 +200,7 @@ export class Player {
         }
 
         const groundCheck = this.getAABB(new THREE.Vector3(newPos.x, newPos.y - 0.05, newPos.z));
+        this.wasOnGround = this.onGround;
         this.onGround = this.checkCollision(groundCheck);
 
         newPos.x = Math.max(PLAYER_HALF_W + 0.1, Math.min(WORLD_SIZE_X - PLAYER_HALF_W - 0.1, newPos.x));
@@ -130,9 +208,12 @@ export class Player {
         newPos.y = Math.max(0, Math.min(WORLD_HEIGHT + 10, newPos.y));
 
         if (newPos.y < -10) {
-            newPos.set(WORLD_SIZE_X / 2, 40, WORLD_SIZE_Z / 2);
-            this.velocity.set(0, 0, 0);
-            this.onGround = false;
+            this.damage(20);
+            if (this.alive) {
+                newPos.set(WORLD_SIZE_X / 2, 40, WORLD_SIZE_Z / 2);
+                this.velocity.set(0, 0, 0);
+                this.onGround = false;
+            }
         }
 
         this.position.copy(newPos);

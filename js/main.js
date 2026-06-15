@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { World } from './world.js';
 import { Player } from './player.js';
-import { HOTBAR_BLOCKS, HOTBAR_SIZE, BLOCK_NAMES, AIR, REACH_DISTANCE, WORLD_SIZE_X, WORLD_SIZE_Z } from './constants.js';
+import { Inventory } from './inventory.js';
+import { HOTBAR_BLOCKS, HOTBAR_SIZE, BLOCK_NAMES, AIR, REACH_DISTANCE, WORLD_SIZE_X, WORLD_SIZE_Z, STONE, DIRT, GRASS, COBBLESTONE, WOOD, PLANKS, SAND, GRAVEL, BRICK, STONE_BRICK, GLASS } from './constants.js';
 
 const container = document.getElementById('canvas-container');
 const loadingEl = document.getElementById('loading');
@@ -17,6 +18,7 @@ let isLocked = false;
 
 function selectSlot(index) {
     selectedSlot = index;
+    inventory.selectSlot(index);
     document.querySelectorAll('.slot').forEach((s, i) => s.classList.toggle('selected', i === index));
 }
 
@@ -29,8 +31,10 @@ function showBlockIndicator(msg) {
 
 function buildHotbar(previewFn) {
     hotbarEl.innerHTML = '';
+    const hotbarSlots = inventory.getHotbarSlots();
     for (let i = 0; i < HOTBAR_SIZE; i++) {
         const blockType = HOTBAR_BLOCKS[i];
+        const slotData = hotbarSlots[i];
         const slot = document.createElement('div');
         slot.className = 'slot' + (i === selectedSlot ? ' selected' : '');
         slot.dataset.index = i;
@@ -44,10 +48,10 @@ function buildHotbar(previewFn) {
         }
         preview.title = BLOCK_NAMES[blockType] || '方块';
         slot.appendChild(preview);
-        const num = document.createElement('span');
-        num.className = 'slot-number';
-        num.textContent = i + 1;
-        slot.appendChild(num);
+        const count = document.createElement('span');
+        count.className = 'slot-number';
+        count.textContent = slotData.count > 0 ? slotData.count : '';
+        slot.appendChild(count);
         slot.addEventListener('click', () => selectSlot(i));
         hotbarEl.appendChild(slot);
     }
@@ -92,8 +96,41 @@ function getInput() {
         left: !!keys['KeyA'] || !!keys['ArrowLeft'],
         right: !!keys['KeyD'] || !!keys['ArrowRight'],
         jump: !!keys['Space'],
+        sprint: !!keys['ShiftLeft'] || !!keys['ShiftRight'],
     };
 }
+
+function updateHUD() {
+    const healthEl = document.getElementById('health-bar');
+    const foodEl = document.getElementById('food-bar');
+    if (!healthEl) return;
+
+    const hearts = Math.ceil(player.health / 2);
+    const maxHearts = player.maxHealth / 2;
+    const foodIcons = Math.ceil(player.food / 2);
+    const maxFood = player.maxFood / 2;
+
+    healthEl.innerHTML = '';
+    for (let i = 0; i < maxHearts; i++) {
+        const span = document.createElement('span');
+        span.className = 'icon' + (i >= hearts ? ' lost' : '');
+        span.textContent = '❤️';
+        healthEl.appendChild(span);
+    }
+
+    foodEl.innerHTML = '';
+    for (let i = 0; i < maxFood; i++) {
+        const span = document.createElement('span');
+        span.className = 'icon' + (i >= foodIcons ? ' lost' : '');
+        span.textContent = '🍖';
+        foodEl.appendChild(span);
+    }
+}
+
+document.getElementById('respawn-btn')?.addEventListener('click', () => {
+    player.respawn();
+    document.body.requestPointerLock();
+});
 
 function destroyBlock() {
     const origin = camera.position.clone();
@@ -106,7 +143,9 @@ function destroyBlock() {
         if (block !== AIR) {
             world.setBlock(bp.x, bp.y, bp.z, AIR);
             world.updateDirtyChunks();
+            inventory.addBlock(block, 1);
             showBlockIndicator('破坏: ' + (BLOCK_NAMES[block] || '方块'));
+            buildHotbar(world.createBlockPreview);
         }
     }
 }
@@ -118,6 +157,11 @@ function placeBlock() {
     const result = world.raycastBlock(origin, direction, REACH_DISTANCE);
     if (result && result.placePos) {
         const pp = result.placePos;
+        const blockType = HOTBAR_BLOCKS[selectedSlot];
+        if (!inventory.hasBlock(blockType, 1)) {
+            showBlockIndicator('⛔ 沒有這個方塊');
+            return;
+        }
         const playerAABB = player.getAABB(player.position);
         const placeAABB = { minX: pp.x, maxX: pp.x+1, minY: pp.y, maxY: pp.y+1, minZ: pp.z, maxZ: pp.z+1 };
         const overlaps = !(playerAABB.maxX <= placeAABB.minX || playerAABB.minX >= placeAABB.maxX ||
@@ -125,9 +169,11 @@ function placeBlock() {
                            playerAABB.maxZ <= placeAABB.minZ || playerAABB.minZ >= placeAABB.maxZ);
         if (overlaps) { showBlockIndicator('⛔ 无法在此放置'); return; }
         if (world.getBlock(pp.x, pp.y, pp.z) === AIR) {
-            world.setBlock(pp.x, pp.y, pp.z, HOTBAR_BLOCKS[selectedSlot]);
+            world.setBlock(pp.x, pp.y, pp.z, blockType);
             world.updateDirtyChunks();
-            showBlockIndicator('放置: ' + (BLOCK_NAMES[HOTBAR_BLOCKS[selectedSlot]] || '方块'));
+            inventory.removeBlock(blockType, 1);
+            showBlockIndicator('放置: ' + (BLOCK_NAMES[blockType] || '方块'));
+            buildHotbar(world.createBlockPreview);
         }
     }
 }
@@ -168,6 +214,7 @@ scene.add(controls.getObject());
 
 const world = new World(scene);
 const player = new Player(camera, world);
+const inventory = new Inventory(36, HOTBAR_SIZE);
 
 async function start() {
     try {
@@ -180,12 +227,21 @@ async function start() {
             loadText.textContent = text + ` (${Math.round(progress * 100)}%)`;
         });
 
+        // 初始物品
+        inventory.addBlock(PLANKS, 16);
+        inventory.addBlock(COBBLESTONE, 16);
+        inventory.addBlock(DIRT, 16);
+        inventory.addBlock(STONE, 16);
+        inventory.addBlock(WOOD, 8);
+        inventory.addBlock(GLASS, 8);
+
         buildHotbar(world.createBlockPreview);
 
         const sx = Math.floor(WORLD_SIZE_X / 2);
         const sz = Math.floor(WORLD_SIZE_Z / 2);
         let sy = world.findSurfaceY(sx, sz) + 2;
         sy = Math.max(sy, 20);
+        player.respawnPos.set(sx, sy, sz);
         player.position.set(sx, sy, sz);
         player.velocity.set(0, 0, 0);
         player.camera.position.set(sx, sy + 1.6, sz);
@@ -199,6 +255,7 @@ async function start() {
             requestAnimationFrame(animate);
             const delta = clock.getDelta();
             if (isLocked) player.update(delta, getInput());
+            updateHUD();
             world.updateDirtyChunks();
             renderer.render(scene, camera);
         }
