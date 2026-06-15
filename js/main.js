@@ -174,6 +174,7 @@ async function start() {
         await new Promise(r => setTimeout(r, 50));
         await new Promise(r => requestAnimationFrame(r));
 
+        let totalFaces = 0;
         world.generateAll((progress, text) => {
             loadBar.style.width = Math.round(progress * 100) + '%';
             loadText.textContent = text;
@@ -186,6 +187,19 @@ async function start() {
         player.position.set(sx, sy, sz);
         player.velocity.set(0, 0, 0);
         player.camera.position.set(sx, sy + 1.6, sz);
+
+        // 除錯資訊
+        for (const chunk of world.chunks.values()) {
+            if (chunk.mesh) {
+                const geo = chunk.mesh.geometry;
+                totalFaces += geo.attributes.position.count / 3;
+            }
+        }
+        const dbg = document.createElement('div');
+        dbg.id = 'debug';
+        dbg.style.cssText = 'position:fixed;top:10px;left:10px;z-index:999;color:#fff;background:rgba(0,0,0,0.8);padding:10px;font-size:13px;font-family:monospace;pointer-events:none;';
+        dbg.innerHTML = `Chunks: ${world.chunks.size}<br>Faces: ${totalFaces}<br>Cam: (${camera.position.x.toFixed(1)}, ${camera.position.y.toFixed(1)}, ${camera.position.z.toFixed(1)})<br>SurfaceY: ${sy-2}`;
+        document.body.appendChild(dbg);
 
         await new Promise(r => setTimeout(r, 400));
         loadingEl.classList.add('hidden');
