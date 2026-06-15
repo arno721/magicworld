@@ -118,13 +118,11 @@ export class Chunk {
                         const nwy = ly + n.dy;
                         const nwz = wz + n.dz;
                         const neighborBlock = this.getBlockWorld(nwx, nwy, nwz);
-                        if (neighborBlock !== AIR && neighborBlock !== undefined &&
-                            !(neighborBlock === LEAVES && block !== LEAVES) &&
-                            !(neighborBlock === LEAVES && block === LEAVES)) {
-                            if (neighborBlock !== LEAVES || block !== LEAVES) continue;
-                        }
-                        if (neighborBlock === LEAVES && block !== LEAVES) continue;
-                        if (neighborBlock === AIR || neighborBlock === undefined || neighborBlock === LEAVES) {
+                        // 不渲染被實心方塊遮擋的面
+                        if (neighborBlock !== AIR && neighborBlock !== undefined && neighborBlock !== LEAVES) continue;
+                        // 優化：兩個樹葉相鄰不渲染內部面
+                        if (block === LEAVES && neighborBlock === LEAVES) continue;
+                        {
                             let c1, c2, c3, c4;
                             if (colorInfo.uniform) {
                                 c1 = c2 = c3 = c4 = colorInfo.color;
