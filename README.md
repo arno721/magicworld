@@ -48,20 +48,28 @@
 
 ## 本地執行
 
-無需安裝任何套件，直接使用支援 ES Module 的現代瀏覽器開啟即可：
+無需安裝任何套件，使用支援 ES Module 的現代瀏覽器搭配靜態伺服器執行：
 
 ```bash
-# 使用 VS Code Live Server 或其他靜態伺服器
+# 使用 VS Code Live Server 或 npx
 npx serve .
 ```
 
-或直接雙擊 `magicworld.html` 檔案（部分瀏覽器因 CORS 限制需使用伺服器）。
+> 因 ES Modules 使用 **CORS** 限制，無法直接雙擊開啟檔案，需要使用 HTTP 伺服器。
 
 ## 專案結構
 
 ```
 magicworld/
-└── magicworld.html   # 完整遊戲（HTML + CSS + JavaScript 全在單一檔案中）
+├── index.html          # 入口頁面（HTML + CSS）
+├── js/
+│   ├── main.js         # 主程式入口與遊戲循環
+│   ├── constants.js    # 常數、方塊類型與顏色定義
+│   ├── perlin.js       # Perlin 噪聲生成器（2D/3D）
+│   ├── chunk.js        # 區塊系統（資料儲存與網格建構）
+│   ├── world.js        # 世界生成（地形、洞穴、樹木）
+│   └── player.js       # 玩家控制（移動、碰撞檢測）
+└── README.md           # 專案說明
 ```
 
 ## 授權
