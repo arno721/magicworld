@@ -119,11 +119,10 @@ export class Chunk {
                         const nwz = wz + n.dz;
                         const neighborBlock = this.getBlockWorld(nwx, nwy, nwz);
 
-                        // 修复：只有空气和树叶才视为“透明”，需要渲染面
-                        // 其他所有方块（包括石头、泥土、木头等）都会遮挡面
-                        if (neighborBlock !== AIR && neighborBlock !== LEAVES) {
-                            continue;
-                        }
+                        // 跳过被實心方塊遮擋的面
+                        if (neighborBlock !== AIR && neighborBlock !== undefined && neighborBlock !== LEAVES) continue;
+                        // 優化：兩個樹葉相鄰時不渲染內部面
+                        if (block === LEAVES && neighborBlock === LEAVES) continue;
 
                         // 确定面的四个顶点颜色
                         let c1, c2, c3, c4;
@@ -157,7 +156,7 @@ export class Chunk {
         geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
         geometry.computeBoundingSphere();
 
-        const material = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.FrontSide });
+        const material = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
         this.mesh = new THREE.Mesh(geometry, material);
         this.mesh.position.set(0, 0, 0);
         this.mesh.castShadow = true;
