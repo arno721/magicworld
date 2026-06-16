@@ -252,35 +252,67 @@ export class World {
     }
 
     raycastBlock(origin, direction, maxDistance = REACH_DISTANCE) {
-        const meshes = [];
-        for (const chunk of this.chunks.values()) {
-            if (chunk.mesh) meshes.push(chunk.mesh);
+        // DDA 體素射線追蹤（Minecraft 標準演算法）
+        const dir = direction.clone().normalize();
+        let x = Math.floor(origin.x);
+        let y = Math.floor(origin.y);
+        let z = Math.floor(origin.z);
+
+        const stepX = dir.x > 0 ? 1 : -1;
+        const stepY = dir.y > 0 ? 1 : -1;
+        const stepZ = dir.z > 0 ? 1 : -1;
+
+        const tDeltaX = Math.abs(1 / dir.x);
+        const tDeltaY = Math.abs(1 / dir.y);
+        const tDeltaZ = Math.abs(1 / dir.z);
+
+        let tMaxX = dir.x !== 0 ? ((dir.x > 0 ? (x + 1 - origin.x) : (origin.x - x)) / Math.abs(dir.x)) : Infinity;
+        let tMaxY = dir.y !== 0 ? ((dir.y > 0 ? (y + 1 - origin.y) : (origin.y - y)) / Math.abs(dir.y)) : Infinity;
+        let tMaxZ = dir.z !== 0 ? ((dir.z > 0 ? (z + 1 - origin.z) : (origin.z - z)) / Math.abs(dir.z)) : Infinity;
+
+        let lastNormal = new THREE.Vector3(0, 0, 0);
+
+        for (let i = 0; i < maxDistance * 3; i++) {
+            const block = this.getBlock(x, y, z);
+            if (block !== AIR) {
+                return {
+                    point: new THREE.Vector3(
+                        origin.x + Math.min(tMaxX, tMaxY, tMaxZ) * dir.x,
+                        origin.y + Math.min(tMaxX, tMaxY, tMaxZ) * dir.y,
+                        origin.z + Math.min(tMaxX, tMaxY, tMaxZ) * dir.z,
+                    ),
+                    normal: lastNormal,
+                    blockPos: new THREE.Vector3(x, y, z),
+                    placePos: new THREE.Vector3(x + lastNormal.x, y + lastNormal.y, z + lastNormal.z),
+                    distance: Math.min(tMaxX, tMaxY, tMaxZ),
+                };
+            }
+
+            if (tMaxX < tMaxY) {
+                if (tMaxX < tMaxZ) {
+                    x += stepX;
+                    tMaxX += tDeltaX;
+                    lastNormal.set(-stepX, 0, 0);
+                } else {
+                    z += stepZ;
+                    tMaxZ += tDeltaZ;
+                    lastNormal.set(0, 0, -stepZ);
+                }
+            } else {
+                if (tMaxY < tMaxZ) {
+                    y += stepY;
+                    tMaxY += tDeltaY;
+                    lastNormal.set(0, -stepY, 0);
+                } else {
+                    z += stepZ;
+                    tMaxZ += tDeltaZ;
+                    lastNormal.set(0, 0, -stepZ);
+                }
+            }
+
+            if (Math.min(tMaxX, tMaxY, tMaxZ) > maxDistance) break;
         }
-        if (meshes.length === 0) return null;
-
-        const raycaster = new THREE.Raycaster();
-        raycaster.set(origin, direction.normalize());
-        raycaster.far = maxDistance;
-        const intersects = raycaster.intersectObjects(meshes, false);
-        if (intersects.length === 0) return null;
-
-        const hit = intersects[0];
-        const point = hit.point.clone();
-        const normal = hit.face.normal.clone();
-        normal.transformDirection(hit.object.matrixWorld);
-
-        const blockPos = new THREE.Vector3(
-            Math.floor(point.x - normal.x * 0.5),
-            Math.floor(point.y - normal.y * 0.5),
-            Math.floor(point.z - normal.z * 0.5)
-        );
-        const placePos = new THREE.Vector3(
-            Math.floor(point.x + normal.x * 0.5),
-            Math.floor(point.y + normal.y * 0.5),
-            Math.floor(point.z + normal.z * 0.5)
-        );
-
-        return { point, normal, blockPos, placePos, distance: hit.distance };
+        return null;
     }
 
     dispose() {

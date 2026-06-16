@@ -16,6 +16,82 @@ const blockIndicator = document.getElementById('block-indicator');
 
 let selectedSlot = 0;
 let isLocked = false;
+let inventoryOpen = false;
+let escOpen = false;
+let targetBlockPos = null;
+
+// ====== 音效系統 ======
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+function playTone(freq, duration, type = 'square', volume = 0.15) {
+    try {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
+    } catch (e) { /* 忽略音效錯誤 */ }
+}
+
+function playDestroySound() {
+    playTone(200, 0.08, 'square', 0.1);
+    setTimeout(() => playTone(150, 0.06, 'square', 0.08), 50);
+}
+
+function playPlaceSound() {
+    playTone(300, 0.06, 'triangle', 0.1);
+    setTimeout(() => playTone(350, 0.04, 'triangle', 0.08), 30);
+}
+
+function playHitSound() {
+    playTone(120, 0.04, 'sawtooth', 0.06);
+}
+
+// ====== Block selection overlay ======
+const overlayGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.001, 1.001, 1.001));
+const overlayMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 });
+const overlayMesh = new THREE.LineSegments(overlayGeo, overlayMat);
+overlayMesh.visible = false;
+
+// ====== 天空盒（漸層） ======
+function createSky() {
+    const skyGeo = new THREE.SphereGeometry(400, 32, 15);
+    const skyMat = new THREE.ShaderMaterial({
+        side: THREE.BackSide,
+        uniforms: {
+            topColor: { value: new THREE.Color(0x0077ff) },
+            bottomColor: { value: new THREE.Color(0x87CEEB) },
+            offset: { value: 20 },
+            exponent: { value: 0.6 },
+        },
+        vertexShader: `
+            varying vec3 vWorldPosition;
+            void main() {
+                vec4 worldPos = modelMatrix * vec4(position, 1.0);
+                vWorldPosition = worldPos.xyz;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `,
+        fragmentShader: `
+            uniform vec3 topColor;
+            uniform vec3 bottomColor;
+            uniform float offset;
+            uniform float exponent;
+            varying vec3 vWorldPosition;
+            void main() {
+                float h = normalize(vWorldPosition + offset).y;
+                gl_FragColor = vec4(mix(bottomColor, topColor, max(pow(max(h, 0.0), exponent), 0.0)), 1.0);
+            }
+        `,
+    });
+    const sky = new THREE.Mesh(skyGeo, skyMat);
+    return sky;
+}
 
 function selectSlot(index) {
     selectedSlot = index;
@@ -58,6 +134,49 @@ function buildHotbar(previewFn) {
     }
 }
 
+function buildInventoryScreen(previewFn) {
+    const grid = document.getElementById('inv-grid');
+    grid.innerHTML = '';
+    for (let i = 0; i < inventory.size; i++) {
+        const slot = inventory.slots[i];
+        const div = document.createElement('div');
+        div.className = 'inv-slot';
+        if (slot.count > 0 && previewFn) {
+            const canvas = previewFn(slot.blockType, 28);
+            canvas.style.width = '28px'; canvas.style.height = '28px';
+            div.appendChild(canvas);
+            const cnt = document.createElement('span');
+            cnt.className = 'count';
+            cnt.textContent = slot.count;
+            div.appendChild(cnt);
+        }
+        grid.appendChild(div);
+    }
+}
+
+function toggleInventory() {
+    inventoryOpen = !inventoryOpen;
+    document.getElementById('inventory-screen').style.display = inventoryOpen ? 'flex' : 'none';
+    if (inventoryOpen) {
+        buildInventoryScreen(world.createBlockPreview);
+        document.exitPointerLock();
+    } else if (!escOpen) {
+        document.body.requestPointerLock();
+    }
+}
+
+function toggleEsc() {
+    escOpen = !escOpen;
+    document.getElementById('esc-menu').style.display = escOpen ? 'flex' : 'none';
+    document.getElementById('pause-indicator').style.display = escOpen ? 'block' : 'none';
+    if (escOpen) {
+        document.exitPointerLock();
+    } else if (!inventoryOpen) {
+        document.body.requestPointerLock();
+    }
+}
+
+// ====== 按鍵 ======
 const keys = {};
 window.addEventListener('keydown', (e) => {
     keys[e.code] = true;
@@ -67,6 +186,8 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyM') { magic.toggle(); e.preventDefault(); }
     if (e.code === 'KeyC') { if (magic.active) magic.cycleSpell(e.shiftKey ? -1 : 1); e.preventDefault(); }
     if (e.code === 'KeyF') { magic.cast(); e.preventDefault(); }
+    if (e.code === 'KeyE') { e.preventDefault(); if (!escOpen) toggleInventory(); }
+    if (e.code === 'Escape') { e.preventDefault(); if (inventoryOpen) { toggleInventory(); } else { toggleEsc(); } }
 });
 window.addEventListener('keyup', (e) => { keys[e.code] = false; });
 window.addEventListener('wheel', (e) => {
@@ -74,12 +195,14 @@ window.addEventListener('wheel', (e) => {
     if (e.deltaY > 0) selectSlot((selectedSlot + 1) % HOTBAR_SIZE);
     else selectSlot((selectedSlot - 1 + HOTBAR_SIZE) % HOTBAR_SIZE);
 });
+
+// ====== 滑鼠 ======
 window.addEventListener('mousedown', (e) => {
     if (!isLocked) return;
     if (e.button === 0) destroyBlock();
     else if (e.button === 2) {
-        if (magic.active) { magic.cast(); }
-        else { placeBlock(); }
+        if (magic.active) magic.cast();
+        else placeBlock();
         e.preventDefault();
     }
 });
@@ -89,12 +212,24 @@ document.addEventListener('pointerlockchange', () => {
     hintEl.style.opacity = isLocked ? '0' : '1';
 });
 document.body.addEventListener('click', () => {
-    if (!isLocked) document.body.requestPointerLock();
+    if (!isLocked && !inventoryOpen && !escOpen) document.body.requestPointerLock();
 });
 window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ====== ESC 選單按鈕 ======
+document.getElementById('esc-resume')?.addEventListener('click', toggleEsc);
+document.getElementById('esc-save')?.addEventListener('click', () => {
+    showBlockIndicator('💾 世界已儲存（LocalStorage）');
+    toggleEsc();
+});
+document.getElementById('esc-back')?.addEventListener('click', () => {
+    if (confirm('確定回到標題畫面？未儲存的進度將遺失。')) {
+        location.reload();
+    }
 });
 
 function getInput() {
@@ -125,7 +260,6 @@ function updateHUD() {
         span.textContent = '❤️';
         healthEl.appendChild(span);
     }
-
     foodEl.innerHTML = '';
     for (let i = 0; i < maxFood; i++) {
         const span = document.createElement('span');
@@ -135,77 +269,98 @@ function updateHUD() {
     }
 }
 
+function updateTargetBlock() {
+    const origin = camera.position.clone();
+    const direction = new THREE.Vector3();
+    camera.getWorldDirection(direction);
+    const result = world.raycastBlock(origin, direction, REACH_DISTANCE);
+    if (result) {
+        targetBlockPos = result.blockPos;
+        overlayMesh.position.set(
+            targetBlockPos.x + 0.5,
+            targetBlockPos.y + 0.5,
+            targetBlockPos.z + 0.5
+        );
+        overlayMesh.visible = true;
+    } else {
+        overlayMesh.visible = false;
+        targetBlockPos = null;
+    }
+}
+
+function destroyBlock() {
+    updateTargetBlock();
+    if (!targetBlockPos) return;
+    const bp = targetBlockPos;
+    const block = world.getBlock(bp.x, bp.y, bp.z);
+    if (block !== AIR) {
+        world.setBlock(bp.x, bp.y, bp.z, AIR);
+        world.updateDirtyChunks();
+        inventory.addBlock(block, 1);
+        playDestroySound();
+        showBlockIndicator('破壞: ' + (BLOCK_NAMES[block] || '方塊') + ` (×${inventory.countBlock(block)})`);
+        buildHotbar(world.createBlockPreview);
+    }
+}
+
+function placeBlock() {
+    updateTargetBlock();
+    if (!targetBlockPos) return;
+    const origin = camera.position.clone();
+    const direction = new THREE.Vector3();
+    camera.getWorldDirection(direction);
+    const result = world.raycastBlock(origin, direction, REACH_DISTANCE);
+    if (!result || !result.placePos) return;
+
+    const pp = result.placePos;
+    const blockType = HOTBAR_BLOCKS[selectedSlot];
+    if (!inventory.hasBlock(blockType, 1)) {
+        showBlockIndicator('⛔ 沒有這個方塊');
+        return;
+    }
+    const playerAABB = player.getAABB(player.position);
+    const placeAABB = { minX: pp.x, maxX: pp.x+1, minY: pp.y, maxY: pp.y+1, minZ: pp.z, maxZ: pp.z+1 };
+    const overlaps = !(playerAABB.maxX <= placeAABB.minX || playerAABB.minX >= placeAABB.maxX ||
+                       playerAABB.maxY <= placeAABB.minY || playerAABB.minY >= placeAABB.maxY ||
+                       playerAABB.maxZ <= placeAABB.minZ || playerAABB.minZ >= placeAABB.maxZ);
+    if (overlaps) { showBlockIndicator('⛔ 無法在此放置'); return; }
+    if (world.getBlock(pp.x, pp.y, pp.z) === AIR) {
+        world.setBlock(pp.x, pp.y, pp.z, blockType);
+        world.updateDirtyChunks();
+        inventory.removeBlock(blockType, 1);
+        playPlaceSound();
+        showBlockIndicator('放置: ' + (BLOCK_NAMES[blockType] || '方塊'));
+        buildHotbar(world.createBlockPreview);
+    }
+}
+
 document.getElementById('respawn-btn')?.addEventListener('click', () => {
     player.respawn();
     document.body.requestPointerLock();
 });
 
-function destroyBlock() {
-    const origin = camera.position.clone();
-    const direction = new THREE.Vector3();
-    camera.getWorldDirection(direction);
-    const result = world.raycastBlock(origin, direction, REACH_DISTANCE);
-    if (result && result.blockPos) {
-        const bp = result.blockPos;
-        const block = world.getBlock(bp.x, bp.y, bp.z);
-        if (block !== AIR) {
-            world.setBlock(bp.x, bp.y, bp.z, AIR);
-            world.updateDirtyChunks();
-            inventory.addBlock(block, 1);
-            showBlockIndicator('破壞: ' + (BLOCK_NAMES[block] || '方塊') + ` (×${inventory.countBlock(block)})`);
-            buildHotbar(world.createBlockPreview);
-        }
-    } else {
-        showBlockIndicator('⚡ 未擊中方塊');
-    }
-}
-
-function placeBlock() {
-    const origin = camera.position.clone();
-    const direction = new THREE.Vector3();
-    camera.getWorldDirection(direction);
-    const result = world.raycastBlock(origin, direction, REACH_DISTANCE);
-    if (result && result.placePos) {
-        const pp = result.placePos;
-        const blockType = HOTBAR_BLOCKS[selectedSlot];
-        if (!inventory.hasBlock(blockType, 1)) {
-            showBlockIndicator('⛔ 沒有這個方塊');
-            return;
-        }
-        const playerAABB = player.getAABB(player.position);
-        const placeAABB = { minX: pp.x, maxX: pp.x+1, minY: pp.y, maxY: pp.y+1, minZ: pp.z, maxZ: pp.z+1 };
-        const overlaps = !(playerAABB.maxX <= placeAABB.minX || playerAABB.minX >= placeAABB.maxX ||
-                           playerAABB.maxY <= placeAABB.minY || playerAABB.minY >= placeAABB.maxY ||
-                           playerAABB.maxZ <= placeAABB.minZ || playerAABB.minZ >= placeAABB.maxZ);
-        if (overlaps) { showBlockIndicator('⛔ 无法在此放置'); return; }
-        if (world.getBlock(pp.x, pp.y, pp.z) === AIR) {
-            world.setBlock(pp.x, pp.y, pp.z, blockType);
-            world.updateDirtyChunks();
-            inventory.removeBlock(blockType, 1);
-            showBlockIndicator('放置: ' + (BLOCK_NAMES[blockType] || '方块'));
-            buildHotbar(world.createBlockPreview);
-        }
-    }
-}
-
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+// ====== 渲染器設定 ======
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.1;
+renderer.toneMappingExposure = 1.0;
 container.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87CEEB);
-scene.fog = new THREE.Fog(0x87CEEB, 60, 160);
+scene.fog = new THREE.Fog(0x87CEEB, 80, 200);
 
-const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 250);
+const sky = createSky();
+scene.add(sky);
 
-const ambient = new THREE.AmbientLight(0x8899bb, 0.9);
+const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 400);
+
+const ambient = new THREE.AmbientLight(0x8899bb, 0.85);
 scene.add(ambient);
-const sun = new THREE.DirectionalLight(0xfff8e8, 2.5);
+const sun = new THREE.DirectionalLight(0xfff8e8, 2.2);
 sun.position.set(60, 80, 40);
 sun.castShadow = true;
 sun.shadow.mapSize.width = 2048;
@@ -216,11 +371,12 @@ sun.shadow.camera.top = 100;
 sun.shadow.camera.bottom = -100;
 sun.shadow.bias = -0.0003;
 scene.add(sun);
-scene.add(new THREE.HemisphereLight(0x8899cc, 0x554433, 0.5));
+scene.add(new THREE.HemisphereLight(0x8899cc, 0x554433, 0.4));
 
 const controls = new PointerLockControls(camera, document.body);
 controls.pointerSpeed = 0.5;
 scene.add(controls.getObject());
+scene.add(overlayMesh);
 
 const world = new World(scene);
 const player = new Player(camera, world);
@@ -229,7 +385,7 @@ const magic = new MagicSystem(world, player, camera, scene, inventory);
 
 async function start() {
     try {
-        loadText.textContent = '生成地形...';
+        loadText.textContent = '生成世界...';
         await new Promise(r => setTimeout(r, 50));
         await new Promise(r => requestAnimationFrame(r));
 
@@ -238,7 +394,6 @@ async function start() {
             loadText.textContent = text + ` (${Math.round(progress * 100)}%)`;
         });
 
-        // 初始物品（對應所有快捷欄）
         inventory.addBlock(GRASS, 8);
         inventory.addBlock(DIRT, 16);
         inventory.addBlock(STONE, 16);
@@ -268,16 +423,21 @@ async function start() {
         function animate() {
             requestAnimationFrame(animate);
             const delta = clock.getDelta();
-            if (isLocked) player.update(delta, getInput());
-            magic.update(delta);
-            magic.updateLights();
+
+            if (isLocked) {
+                player.update(delta, getInput());
+                magic.update(delta);
+                magic.updateLights();
+                updateTargetBlock();
+            }
+
             updateHUD();
             world.updateDirtyChunks();
             renderer.render(scene, camera);
         }
         animate();
     } catch (err) {
-        loadText.textContent = '错误: ' + (err.message || err);
+        loadText.textContent = '錯誤: ' + (err.message || err);
         console.error(err);
     }
 }

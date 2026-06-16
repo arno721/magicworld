@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { AIR, GRASS, DIRT, STONE, WOOD, LEAVES, SAND, PLANKS, COBBLESTONE, BRICK, GRAVEL, SNOW, COAL_ORE, IRON_ORE, GOLD_ORE, DIAMOND_ORE, BEDROCK, GLASS, STONE_BRICK } from './constants.js';
+import { AIR, GRASS, DIRT, STONE, WOOD, LEAVES, SAND, PLANKS, COBBLESTONE, BRICK, GRAVEL, SNOW, COAL_ORE, IRON_ORE, GOLD_ORE, DIAMOND_ORE, BEDROCK, GLASS, STONE_BRICK, CRAFTING_TABLE, FURNACE } from './constants.js';
 
 const TEX_SIZE = 16;
 const ATLAS_COLS = 8;
@@ -403,6 +403,43 @@ function createStoneBrickTexture(rng) {
     };
 }
 
+function createCraftingTableTopTexture(rng) {
+    const wood = [140, 100, 50];
+    const grid = [80, 55, 25];
+    return (data, w, h) => {
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const i = (y * w + x) * 4;
+                const isGrid = (x % 4 === 3) || (y % 4 === 3);
+                const col = isGrid ? grid : shadeColor(wood, rng.int(-8, 8));
+                data[i] = col[0]; data[i+1] = col[1]; data[i+2] = col[2]; data[i+3] = 255;
+            }
+        }
+    };
+}
+
+function createCraftingTableSideTexture(rng) {
+    const wood = [140, 100, 50];
+    const tool = [100, 80, 60];
+    return (data, w, h) => {
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const i = (y * w + x) * 4;
+                if (y < 4) {
+                    const col = shadeColor(tool, rng.int(-6, 6));
+                    data[i] = col[0]; data[i+1] = col[1]; data[i+2] = col[2];
+                } else {
+                    const stripe = (Math.floor(y / 2) % 2 === 0);
+                    const base = stripe ? wood : shadeColor(wood, -15);
+                    const col = shadeColor(base, rng.int(-6, 6));
+                    data[i] = col[0]; data[i+1] = col[1]; data[i+2] = col[2];
+                }
+                data[i+3] = 255;
+            }
+        }
+    };
+}
+
 // Each block type: { top, bottom, side } texture indices
 export function createTextureAtlas() {
     const rng = new SeededRandom(SEED);
@@ -429,6 +466,8 @@ export function createTextureAtlas() {
         createBedrockTexture(rng),             // 17: bedrock
         createGlassTexture(rng),               // 18: glass
         createStoneBrickTexture(rng),          // 19: stone_brick
+        createCraftingTableTopTexture(rng),    // 20: crafting_table_top
+        createCraftingTableSideTexture(rng),   // 21: crafting_table_side
     ];
 
     const atlasW = ATLAS_COLS * TEX_SIZE;
@@ -491,6 +530,7 @@ export function createTextureAtlas() {
         [BEDROCK]:  { top: 17, bottom: 17, side: 17 },
         [GLASS]:    { top: 18, bottom: 18, side: 18 },
         [STONE_BRICK]: { top: 19, bottom: 19, side: 19 },
+        [CRAFTING_TABLE]: { top: 20, bottom: 8, side: 21 },
     };
 
     function getBlockUVs(blockType, face) {
@@ -516,9 +556,6 @@ export function createTextureAtlas() {
         pctx.drawImage(canvas, srcX, srcY, srcW, srcH, 0, 0, size, size);
         return preview;
     }
-
-    // 更新世界中的工作台方塊（右鍵點擊開合成介面）
-    // 這裡不做任何事，由 main.js 的右鍵點擊邏輯處理
 
     return { texture, getBlockUVs, canvas, createBlockPreview };
 }
