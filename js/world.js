@@ -66,10 +66,9 @@ export class World {
             for (let cz = 0; cz < CHUNKS_Z; cz++) {
                 const chunk = new Chunk(cx, cz, this);
                 this.chunks.set(this.chunkKey(cx, cz), chunk);
-                this.generateChunkData(chunk);
+                await this.generateChunkData(chunk);
                 done++;
                 if (onProgress) onProgress(done / totalChunks * 0.5, '生成地形...');
-                await new Promise(r => setTimeout(r, 1));
             }
         }
 
@@ -97,9 +96,10 @@ export class World {
         }
     }
 
-    generateChunkData(chunk) {
+    async generateChunkData(chunk) {
         const ox = chunk.originX;
         const oz = chunk.originZ;
+        let colCount = 0;
         for (let lx = 0; lx < CHUNK_SIZE; lx++) {
             for (let lz = 0; lz < CHUNK_SIZE; lz++) {
                 const wx = ox + lx;
@@ -161,6 +161,12 @@ export class World {
                         block = STONE;
                     }
                     chunk.setBlock(lx, y, lz, block);
+                }
+
+                colCount++;
+                // 每 16 列讓出主線程（避免凍結超過 4ms）
+                if (colCount % 16 === 0) {
+                    await new Promise(r => setTimeout(r, 0));
                 }
             }
         }
