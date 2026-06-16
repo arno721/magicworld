@@ -124,7 +124,7 @@ export class Chunk {
 
         const material = new THREE.MeshLambertMaterial({
             map: this.world.textureAtlas,
-            side: THREE.DoubleSide,
+            side: THREE.FrontSide,
         });
         this.mesh = new THREE.Mesh(geometry, material);
         this.mesh.position.set(0, 0, 0);

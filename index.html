@@ -111,6 +111,46 @@
         }
         #death-screen button:hover { background: #555; }
 
+        /* 合成畫面 */
+        #crafting-screen {
+            position: fixed; inset: 0; z-index: 55; background: rgba(25,25,35,0.93);
+            display: none; flex-direction: column; align-items: center; justify-content: center; color: #fff;
+        }
+        #crafting-screen .craft-title { font-size: 22px; margin-bottom: 16px; }
+        #crafting-screen .craft-area { display: flex; align-items: center; gap: 20px; }
+        #crafting-screen .craft-grid { display: grid; gap: 2px; background: rgba(0,0,0,0.3); padding: 6px; border-radius: 6px; }
+        #crafting-screen .craft-grid.craft-3x3 { grid-template-columns: repeat(3, 42px); }
+        #crafting-screen .craft-grid.craft-2x2 { grid-template-columns: repeat(2, 42px); }
+        #crafting-screen .craft-slot {
+            width: 42px; height: 42px; background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.12); border-radius: 3px;
+            display: flex; align-items: center; justify-content: center; position: relative; cursor: pointer;
+        }
+        #crafting-screen .craft-slot .count {
+            position: absolute; bottom: 1px; right: 3px; font-size: 9px; color: #aaa;
+        }
+        #crafting-screen .craft-slot .block-preview { width: 24px; height: 24px; image-rendering: pixelated; }
+        #crafting-screen .craft-arrow { font-size: 28px; color: #888; padding: 0 10px; }
+        #crafting-screen .craft-result {
+            width: 42px; height: 42px; background: rgba(255,255,255,0.08);
+            border: 2px solid rgba(255,255,255,0.2); border-radius: 3px;
+            display: flex; align-items: center; justify-content: center; position: relative; cursor: pointer;
+        }
+        #crafting-screen .craft-result .block-preview { width: 28px; height: 28px; image-rendering: pixelated; }
+        #crafting-screen .craft-result .count {
+            position: absolute; bottom: 1px; right: 3px; font-size: 9px; color: #ffd;
+        }
+        #crafting-screen .craft-close {
+            margin-top: 20px; padding: 8px 30px; font-size: 14px; cursor: pointer;
+            background: rgba(255,255,255,0.1); color: #fff; border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 6px;
+        }
+        #crafting-screen .craft-close:hover { background: rgba(255,255,255,0.2); }
+        #crafting-screen .craft-badge {
+            position: absolute; top: -8px; right: -8px; font-size: 9px;
+            background: #5a4; padding: 1px 5px; border-radius: 8px;
+        }
+
         /* 背包畫面 */
         #inventory-screen {
             position: fixed; inset: 0; z-index: 50; background: rgba(30,30,40,0.92);
@@ -178,8 +218,26 @@
 <div id="hotbar"></div>
 <div id="inventory-screen">
     <div class="inv-title">🎒 背包</div>
-    <div class="inv-grid" id="inv-grid"></div>
-    <div style="margin-top:16px;font-size:13px;color:#888;">按 E 關閉 · 拖曳整理（尚未支援）</div>
+    <div style="display:flex;gap:40px;align-items:flex-start;">
+        <div class="inv-grid" id="inv-grid"></div>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:8px;">
+            <div style="font-size:12px;color:#888;">簡易合成</div>
+            <div class="craft-grid craft-2x2" id="inv-craft-grid"></div>
+            <div class="craft-arrow" style="font-size:20px;">→</div>
+            <div class="craft-result" id="inv-craft-result" style="width:42px;height:42px;background:rgba(255,255,255,0.08);border:2px solid rgba(255,255,255,0.2);border-radius:3px;display:flex;align-items:center;justify-content:center;position:relative;cursor:pointer;"></div>
+            <div style="font-size:10px;color:#666;margin-top:4px;">右鍵工作台解鎖3x3</div>
+        </div>
+    </div>
+    <div style="margin-top:12px;font-size:11px;color:#666;">按 E / ESC 關閉</div>
+</div>
+<div id="crafting-screen">
+    <div class="craft-title">🪚 合成</div>
+    <div class="craft-area">
+        <div class="craft-grid craft-3x3" id="craft-grid"></div>
+        <div class="craft-arrow">→</div>
+        <div class="craft-result" id="craft-result"></div>
+    </div>
+    <button class="craft-close" id="craft-close-btn">關閉（E）</button>
 </div>
 <div id="esc-menu">
     <div class="menu-title">⚙ 設定</div>

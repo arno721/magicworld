@@ -1,16 +1,13 @@
 import * as THREE from 'three';
-import { AIR, GRASS, DIRT, STONE, WOOD, LEAVES, SAND, PLANKS, COBBLESTONE, BRICK, GRAVEL, SNOW, COAL_ORE, IRON_ORE, GOLD_ORE, DIAMOND_ORE, BEDROCK, GLASS, STONE_BRICK, CRAFTING_TABLE, FURNACE } from './constants.js';
+import {
+    AIR, GRASS, DIRT, STONE, WOOD, LEAVES, SAND, PLANKS, COBBLESTONE,
+    BRICK, GRAVEL, SNOW, COAL_ORE, IRON_ORE, GOLD_ORE, DIAMOND_ORE,
+    BEDROCK, GLASS, STONE_BRICK, CRAFTING_TABLE, FURNACE
+} from './constants.js';
+import { PerlinNoise } from './perlin.js';
 
-const TEX_SIZE = 16;
+const TEX_SIZE = 128;
 const ATLAS_COLS = 8;
-const SEED = 42;
-
-class SeededRandom {
-    constructor(s) { this.s = s | 0; }
-    next() { this.s = (this.s * 1664525 + 1013904223) | 0; return (this.s >>> 0) / 4294967296; }
-    range(min, max) { return min + this.next() * (max - min); }
-    int(min, max) { return Math.floor(this.range(min, max + 1)); }
-}
 
 function shadeColor(c, amount) {
     return [
@@ -20,82 +17,107 @@ function shadeColor(c, amount) {
     ];
 }
 
-function hexToRgb(hex) {
-    return [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255];
-}
+function lerp(a, b, t) { return a + (b - a) * t; }
 
-function noiseMap(w, h, scale, rng, octaves = 3) {
-    const map = new Float32Array(w * h);
-    for (let o = 0; o < octaves; o++) {
-        const freq = 1 << o;
-        const amp = 1 / (o + 1);
-        for (let y = 0; y < h; y++) {
-            for (let x = 0; x < w; x++) {
-                const i = y * w + x;
-                const v = rng.next();
-                map[i] += v * amp;
-            }
-        }
-    }
-    let min = Infinity, max = -Infinity;
-    for (let i = 0; i < map.length; i++) { if (map[i] < min) min = map[i]; if (map[i] > max) max = map[i]; }
-    const range = max - min || 1;
-    for (let i = 0; i < map.length; i++) map[i] = (map[i] - min) / range;
-    return map;
-}
+function clamp(v, mn, mx) { return Math.max(mn, Math.min(mx, v)); }
 
-function drawPixelated(ctx, w, h, drawFn) {
+function drawTexture(ctx, w, h, drawFn) {
     const temp = document.createElement('canvas');
     temp.width = w; temp.height = h;
     const tc = temp.getContext('2d');
     const imgData = tc.createImageData(w, h);
     drawFn(imgData.data, w, h);
     tc.putImageData(imgData, 0, 0);
-    ctx.imageSmoothingEnabled = false;
+    ctx.imageSmoothingEnabled = true;
     ctx.drawImage(temp, 0, 0, TEX_SIZE, TEX_SIZE);
 }
 
-function createStoneTexture(rng) {
-    const base = [130, 130, 130];
+// ====== 雜訊輔助 ======
+function fbm1D(noise, x, octaves, scale) {
+    let v = 0, amp = 1, freq = 1;
+    for (let i = 0; i < octaves; i++) {
+        v += noise.noise2D(x * freq * scale, 0) * amp;
+        amp *= 0.5; freq *= 2;
+    }
+    return v * 0.5 + 0.5;
+}
+
+function fbm2D(noise, x, y, octaves, scale) {
+    let v = 0, amp = 1, freq = 1;
+    for (let i = 0; i < octaves; i++) {
+        v += noise.noise2D(x * freq * scale, y * freq * scale) * amp;
+        amp *= 0.5; freq *= 2;
+    }
+    return v * 0.5 + 0.5;
+}
+
+// ====== 紋理產生器 ======
+
+function stoneGenerator(noise, detailNoise) {
     return (data, w, h) => {
         for (let y = 0; y < h; y++) {
             for (let x = 0; x < w; x++) {
                 const i = (y * w + x) * 4;
-                const n = rng.next();
-                const v = n > 0.6 ? shadeColor(base, rng.int(-30, 10)) : shadeColor(base, rng.int(-15, 15));
-                data[i] = v[0]; data[i+1] = v[1]; data[i+2] = v[2]; data[i+3] = 255;
-            }
-        }
-        // Add crack lines
-        for (let c = 0; c < 3; c++) {
-            const sx = rng.int(1, w - 2);
-            const sy = rng.int(1, h - 2);
-            for (let l = 0; l < rng.int(2, 5); l++) {
-                const px = Math.min(w - 1, Math.max(0, sx + (rng.next() > 0.5 ? 1 : -1) * l));
-                const py = Math.min(h - 1, Math.max(0, sy + (rng.next() > 0.5 ? 1 : -1)));
-                const i = (py * w + px) * 4;
-                const dark = shadeColor(base, -40);
-                data[i] = dark[0]; data[i+1] = dark[1]; data[i+2] = dark[2];
+                const n = fbm2D(noise, x, y, 5, 0.04);
+                const d = detailNoise.noise2D(x * 0.1, y * 0.1) * 0.3;
+                const cracks = Math.abs(noise.noise2D(x * 0.08, y * 0.08)) < 0.06 ? -20 : 0;
+
+                // 裂縫網格
+                const crack1 = Math.abs(noise.noise2D(x * 0.03, y * 0.03));
+                const crackVal = crack1 > 0.48 && crack1 < 0.52 ? -30 : 0;
+
+                const base = 130 + n * 40 + d * 50 + cracks + crackVal;
+                data[i] = clamp(base, 60, 200);
+                data[i+1] = clamp(base - 3, 55, 195);
+                data[i+2] = clamp(base - 5, 50, 190);
+                data[i+3] = 255;
             }
         }
     };
 }
 
-function createDirtTexture(rng) {
-    const base = [120, 85, 50];
+function dirtGenerator(noise) {
     return (data, w, h) => {
         for (let y = 0; y < h; y++) {
             for (let x = 0; x < w; x++) {
                 const i = (y * w + x) * 4;
-                const n = rng.next();
-                if (n < 0.1) {
-                    const dark = shadeColor(base, -40);
-                    data[i] = dark[0]; data[i+1] = dark[1]; data[i+2] = dark[2];
-                } else if (n < 0.15) {
-                    const light = shadeColor(base, 25);
-                    data[i] = light[0]; data[i+1] = light[1]; data[i+2] = light[2];
+                const n = fbm2D(noise, x, y, 4, 0.05);
+                const pebble = Math.abs(noise.noise2D(x * 0.15, y * 0.15));
+                const darkSpot = pebble > 0.45 ? -30 : 0;
+                const r = 105 + n * 30 + darkSpot;
+                const g = 75 + n * 25 + darkSpot;
+                const b = 45 + n * 20 + darkSpot;
+                data[i] = clamp(r, 50, 160);
+                data[i+1] = clamp(g, 40, 130);
+                data[i+2] = clamp(b, 25, 90);
+                data[i+3] = 255;
+            }
+        }
+    };
+}
+
+function grassTopGenerator(noise, detailNoise) {
+    return (data, w, h) => {
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const i = (y * w + x) * 4;
+                const n = fbm2D(noise, x, y, 4, 0.06);
+                const dark = detailNoise.noise2D(x * 0.2, y * 0.2);
+
+                // 草叢與小花
+                const grassBlade = Math.abs(noise.noise2D(x * 0.3 + y * 0.1, y * 0.3 - x * 0.1));
+                const flower = Math.abs(detailNoise.noise2D(x * 0.08, y * 0.08));
+
+                if (flower > 0.47 && flower < 0.50) {
+                    // 小花
+                    data[i] = 255; data[i+1] = 220; data[i+2] = 100;
+                } else if (grassBlade > 0.48 && flower > 0.4) {
+                    // 較亮的草葉
+                    data[i] = 80 + n * 50; data[i+1] = 160 + n * 40 + dark * 20; data[i+2] = 40 + n * 30;
                 } else {
-                    data[i] = base[0]; data[i+1] = base[1]; data[i+2] = base[2];
+                    data[i] = 60 + n * 60 + dark * 15;
+                    data[i+1] = 130 + n * 50 + dark * 20;
+                    data[i+2] = 35 + n * 30 + dark * 10;
                 }
                 data[i+3] = 255;
             }
@@ -103,50 +125,27 @@ function createDirtTexture(rng) {
     };
 }
 
-function createGrassTopTexture(rng) {
-    const base = [90, 160, 50];
+function grassSideGenerator(noise) {
     return (data, w, h) => {
         for (let y = 0; y < h; y++) {
             for (let x = 0; x < w; x++) {
                 const i = (y * w + x) * 4;
-                const n = rng.next();
-                if (n < 0.08) {
-                    const flower = rng.int(0, 2) === 0 ? [255, 255, 100] : [255, 100, 200];
-                    data[i] = flower[0]; data[i+1] = flower[1]; data[i+2] = flower[2];
+                const n = fbm2D(noise, x, y, 3, 0.05);
+                const ty = y / h;
+                // 上部 25%: 草，下部 75%: 泥土，中間過渡
+                if (ty < 0.2) {
+                    const g = 100 + n * 60;
+                    data[i] = 70 + n * 40; data[i+1] = g; data[i+2] = 30 + n * 30;
+                } else if (ty < 0.35) {
+                    const t = (ty - 0.2) / 0.15;
+                    const r = lerp(80, 110, t) + n * 30;
+                    const g = lerp(140, 85, t) + n * 25;
+                    const b = lerp(45, 50, t) + n * 20;
+                    data[i] = clamp(r, 50, 150); data[i+1] = clamp(g, 60, 180); data[i+2] = clamp(b, 30, 90);
                 } else {
-                    const shade = shadeColor(base, rng.int(-25, 20));
-                    data[i] = shade[0]; data[i+1] = shade[1]; data[i+2] = shade[2];
-                }
-                data[i+3] = 255;
-            }
-        }
-        // Grass blades on top row
-        for (let x = 0; x < w; x += 2) {
-            const i = x * 4;
-            data[i] = 70; data[i+1] = 180; data[i+2] = 40; data[i+3] = 255;
-        }
-    };
-}
-
-function createGrassSideTexture(rng) {
-    return (data, w, h) => {
-        // Top 4 rows: grass color, bottom 12 rows: dirt color
-        for (let y = 0; y < h; y++) {
-            for (let x = 0; x < w; x++) {
-                const i = (y * w + x) * 4;
-                if (y < 4) {
-                    const shade = shadeColor([90, 160, 50], rng.int(-20, 15));
-                    data[i] = shade[0]; data[i+1] = shade[1]; data[i+2] = shade[2];
-                } else if (y < 6) {
-                    const t = (y - 4) / 2;
-                    const g = Math.round(90 * (1 - t) + 120 * t);
-                    const r2 = Math.round(160 * (1 - t) + 85 * t);
-                    const b2 = Math.round(50 * (1 - t) + 50 * t);
-                    const shade = shadeColor([r2, g, b2], rng.int(-10, 10));
-                    data[i] = shade[0]; data[i+1] = shade[1]; data[i+2] = shade[2];
-                } else {
-                    const shade = shadeColor([120, 85, 50], rng.int(-15, 15));
-                    data[i] = shade[0]; data[i+1] = shade[1]; data[i+2] = shade[2];
+                    data[i] = clamp(105 + n * 30, 60, 160);
+                    data[i+1] = clamp(75 + n * 25, 50, 130);
+                    data[i+2] = clamp(45 + n * 20, 30, 90);
                 }
                 data[i+3] = 255;
             }
@@ -154,73 +153,169 @@ function createGrassSideTexture(rng) {
     };
 }
 
-function createWoodSideTexture(rng) {
-    const dark = [90, 55, 25];
-    const light = [130, 85, 40];
+function woodSideGenerator(noise, detailNoise) {
     return (data, w, h) => {
         for (let y = 0; y < h; y++) {
-            const stripe = (Math.floor(y / 3) % 2 === 0);
             for (let x = 0; x < w; x++) {
                 const i = (y * w + x) * 4;
-                const base = stripe ? dark : light;
-                const shade = shadeColor(base, rng.int(-8, 8));
-                data[i] = shade[0]; data[i+1] = shade[1]; data[i+2] = shade[2]; data[i+3] = 255;
+                const n = fbm2D(noise, x, y, 3, 0.03);
+                const grain = Math.abs(detailNoise.noise2D(x * 0.15, y * 0.4));
+
+                // 樹皮紋理：垂直條紋 + 粗糙感
+                const stripe = (Math.floor(y / 4) % 2 === 0);
+                const barkLine = Math.sin(y * 0.3 + x * 0.05) > 0.7;
+                const base = stripe ? 100 : 140;
+                const g = stripe ? 60 : 90;
+                const b = stripe ? 25 : 45;
+
+                const grainEffect = grain < 0.3 ? -15 : (grain > 0.7 ? 15 : 0);
+                const r = clamp(base + n * 25 + grainEffect + (barkLine ? -10 : 0), 60, 170);
+                const gg = clamp(g + n * 20 + grainEffect * 0.7, 35, 120);
+                const bb = clamp(b + n * 15 + grainEffect * 0.5, 20, 70);
+                data[i] = r; data[i+1] = gg; data[i+2] = bb; data[i+3] = 255;
             }
         }
     };
 }
 
-function createWoodTopTexture(rng) {
-    const base = [145, 105, 55];
-    const ring = [110, 75, 35];
+function woodTopGenerator(noise, detailNoise) {
     return (data, w, h) => {
         const cx = w / 2, cy = h / 2;
         for (let y = 0; y < h; y++) {
             for (let x = 0; x < w; x++) {
                 const i = (y * w + x) * 4;
-                const dist = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2) / (w / 2);
-                const isRing = Math.abs(dist * 4 % 1 - 0.5) < 0.15;
-                const col = isRing ? ring : base;
-                const shade = shadeColor(col, rng.int(-10, 10));
-                data[i] = shade[0]; data[i+1] = shade[1]; data[i+2] = shade[2]; data[i+3] = 255;
+                const dx = (x - cx) / cx, dy = (y - cy) / cy;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                const angle = Math.atan2(dy, dx);
+
+                const n = detailNoise.noise2D(x * 0.2, y * 0.2);
+                const ringVal = dist * 5 + noise.noise2D(x * 0.05, y * 0.05) * 0.3;
+                const isRing = Math.abs(ringVal % 1 - 0.5) < 0.08;
+                const isDark = Math.abs(ringVal % 1 - 0.5) < 0.15;
+
+                const base = isRing ? 110 : 150;
+                const darkA = isDark ? -15 : 0;
+                const r = clamp(base + n * 20 + darkA, 80, 190);
+                const g = clamp(base * 0.65 + n * 15 + darkA * 0.6, 50, 130);
+                const b = clamp(base * 0.35 + n * 12 + darkA * 0.3, 30, 80);
+                data[i] = r; data[i+1] = g; data[i+2] = b; data[i+3] = 255;
             }
         }
     };
 }
 
-function createLeavesTexture(rng) {
-    const dark = [40, 100, 20];
-    const light = [60, 140, 35];
-    const bright = [80, 170, 50];
+function leavesGenerator(noise) {
     return (data, w, h) => {
         for (let y = 0; y < h; y++) {
             for (let x = 0; x < w; x++) {
                 const i = (y * w + x) * 4;
-                const n = rng.next();
-                let col;
-                if (n < 0.15) col = dark;
-                else if (n < 0.7) col = light;
-                else col = bright;
-                const shade = shadeColor(col, rng.int(-10, 10));
-                data[i] = shade[0]; data[i+1] = shade[1]; data[i+2] = shade[2]; data[i+3] = 240;
-            }
-        }
-    };
-}
+                const n = fbm2D(noise, x, y, 4, 0.08);
+                const cluster = Math.abs(noise.noise2D(x * 0.12, y * 0.12));
 
-function createSandTexture(rng) {
-    const base = [220, 200, 145];
-    return (data, w, h) => {
-        for (let y = 0; y < h; y++) {
-            for (let x = 0; x < w; x++) {
-                const i = (y * w + x) * 4;
-                const v = rng.next();
-                if (v < 0.05) {
-                    const dot = shadeColor(base, -30);
-                    data[i] = dot[0]; data[i+1] = dot[1]; data[i+2] = dot[2];
+                if (cluster < 0.15) {
+                    // 縫隙（透光）
+                    data[i] = 50 + n * 30; data[i+1] = 120 + n * 40; data[i+2] = 30 + n * 20; data[i+3] = 120;
+                } else if (cluster > 0.75) {
+                    // 亮葉
+                    data[i] = 40 + n * 40; data[i+1] = 140 + n * 40; data[i+2] = 35 + n * 30; data[i+3] = 230;
                 } else {
-                    const shade = shadeColor(base, rng.int(-10, 10));
-                    data[i] = shade[0]; data[i+1] = shade[1]; data[i+2] = shade[2];
+                    data[i] = 30 + n * 35; data[i+1] = 110 + n * 35; data[i+2] = 25 + n * 25; data[i+3] = 200;
+                }
+            }
+        }
+    };
+}
+
+function sandGenerator(noise) {
+    return (data, w, h) => {
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const i = (y * w + x) * 4;
+                const n = fbm2D(noise, x, y, 4, 0.06);
+                const dot = Math.abs(noise.noise2D(x * 0.25, y * 0.25));
+                const dark = dot > 0.42 && dot < 0.44 ? -30 : 0;
+                const r = clamp(215 + n * 20 + dark, 170, 245);
+                const g = clamp(195 + n * 20 + dark, 150, 225);
+                const b = clamp(140 + n * 15 + dark, 110, 170);
+                data[i] = r; data[i+1] = g; data[i+2] = b; data[i+3] = 255;
+            }
+        }
+    };
+}
+
+function planksGenerator(noise, detailNoise) {
+    return (data, w, h) => {
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const i = (y * w + x) * 4;
+                const n = fbm2D(noise, x, y, 2, 0.03);
+                const grain = Math.abs(detailNoise.noise2D(x * 0.08, y * 0.12));
+                const isLine = (y % 8 === 0) || (y % 8 === 1);
+                const isGap = (y % 8 === 0) && (Math.sin(x * 0.2) > 0.3);
+                const dark = isLine ? -25 : 0;
+                const gapDark = isGap ? -40 : 0;
+
+                const base = 160 + n * 25 + grain * 20;
+                const g = 115 + n * 20 + grain * 15;
+                const b = 55 + n * 15 + grain * 10;
+                data[i] = clamp(base + dark + gapDark, 80, 200);
+                data[i+1] = clamp(g + dark * 0.7 + gapDark, 60, 150);
+                data[i+2] = clamp(b + dark * 0.5 + gapDark, 30, 90);
+                data[i+3] = 255;
+            }
+        }
+    };
+}
+
+function cobblestoneGenerator(noise, detailNoise) {
+    return (data, w, h) => {
+        const stoneSize = 24;
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const i = (y * w + x) * 4;
+                const sx = Math.floor(x / stoneSize);
+                const sy = Math.floor(y / stoneSize);
+                const seed = sx * 31 + sy * 17;
+                const rng = ((seed * 16807) % 2147483647) / 2147483647;
+
+                const offsetX = (rng - 0.5) * 4;
+                const offsetY = (((seed * 48271) % 2147483647) / 2147483647 - 0.5) * 4;
+                const lx = (x % stoneSize) - stoneSize / 2 + offsetX;
+                const ly = (y % stoneSize) - stoneSize / 2 + offsetY;
+                const dist = Math.sqrt(lx * lx + ly * ly) / (stoneSize * 0.45);
+
+                const n = fbm2D(noise, x, y, 3, 0.04) * 30;
+                const mortar = dist > 1 ? 20 : 0;
+                const stoneBright = n + (1 - Math.min(dist, 1)) * 30;
+
+                const base = 100 + stoneBright;
+                data[i] = clamp(base + mortar * 0.3, 60, 180);
+                data[i+1] = clamp(base * 0.98 + mortar * 0.3, 55, 175);
+                data[i+2] = clamp(base * 0.95 + mortar * 0.3, 50, 170);
+                data[i+3] = 255;
+            }
+        }
+    };
+}
+
+function brickGenerator(noise) {
+    return (data, w, h) => {
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const i = (y * w + x) * 4;
+                const brickH = 10, brickW = 20;
+                const offset = (Math.floor(y / brickH) % 2) * (brickW / 2);
+                const isMortarH = (y % brickH) >= brickH - 1;
+                const isMortarV = ((x + offset) % brickW) >= brickW - 1;
+
+                if (isMortarH || isMortarV) {
+                    data[i] = 65; data[i+1] = 55; data[i+2] = 45;
+                } else {
+                    const n = fbm2D(noise, x, y, 3, 0.05);
+                    const r = clamp(170 + n * 30, 120, 210);
+                    const g = clamp(85 + n * 20, 55, 120);
+                    const b = clamp(60 + n * 15, 40, 85);
+                    data[i] = r; data[i+1] = g; data[i+2] = b;
                 }
                 data[i+3] = 255;
             }
@@ -228,41 +323,55 @@ function createSandTexture(rng) {
     };
 }
 
-function createPlanksTexture(rng) {
-    const base = [160, 115, 55];
-    const dark = [130, 90, 40];
+function gravelGenerator(noise) {
     return (data, w, h) => {
         for (let y = 0; y < h; y++) {
             for (let x = 0; x < w; x++) {
                 const i = (y * w + x) * 4;
-                const isLine = (y % 4 === 0);
-                const col = isLine ? dark : base;
-                const shade = shadeColor(col, rng.int(-5, 5));
-                data[i] = shade[0]; data[i+1] = shade[1]; data[i+2] = shade[2]; data[i+3] = 255;
+                const n = fbm2D(noise, x, y, 3, 0.06);
+                const pebble = Math.abs(noise.noise2D(x * 0.2, y * 0.2));
+                const r = clamp(120 + n * 25 + (pebble > 0.4 ? 20 : 0) - (pebble > 0.48 ? 30 : 0), 70, 170);
+                const g = clamp(110 + n * 25 + (pebble > 0.4 ? 15 : 0) - (pebble > 0.48 ? 25 : 0), 65, 160);
+                const b = clamp(100 + n * 20 + (pebble > 0.4 ? 10 : 0) - (pebble > 0.48 ? 20 : 0), 60, 150);
+                data[i] = r; data[i+1] = g; data[i+2] = b; data[i+3] = 255;
             }
         }
     };
 }
 
-function createCobblestoneTexture(rng) {
-    const base = [110, 110, 110];
-    const dark = [75, 75, 75];
-    const light = [140, 140, 140];
+function snowGenerator(noise) {
     return (data, w, h) => {
         for (let y = 0; y < h; y++) {
             for (let x = 0; x < w; x++) {
                 const i = (y * w + x) * 4;
-                const n = rng.next();
-                let col;
-                if (n < 0.25) col = dark;
-                else if (n < 0.75) col = base;
-                else col = light;
-                const border = (x === 0 || x === w - 1 || y === 0 || y === h - 1);
-                if (border && rng.next() > 0.3) {
-                    const mortar = shadeColor(col, -35);
-                    data[i] = mortar[0]; data[i+1] = mortar[1]; data[i+2] = mortar[2];
+                const n = fbm2D(noise, x, y, 4, 0.05);
+                const crystal = Math.abs(noise.noise2D(x * 0.2, y * 0.2));
+                const highlight = crystal > 0.45 ? 15 : 0;
+                const v = clamp(235 + n * 15 + highlight, 200, 255);
+                data[i] = v; data[i+1] = v; data[i+2] = clamp(v + 5, 205, 255); data[i+3] = 255;
+            }
+        }
+    };
+}
+
+function oreStoneGenerator(baseNoise, oreNoise, oreColor, oreChance) {
+    return (data, w, h) => {
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const i = (y * w + x) * 4;
+                const n = fbm2D(baseNoise, x, y, 3, 0.04);
+                const ore = fbm2D(oreNoise, x, y, 2, 0.08);
+                const base = 125 + n * 35;
+
+                if (ore > (1 - oreChance)) {
+                    const oreBrightness = (ore - (1 - oreChance)) / oreChance;
+                    data[i] = clamp(lerp(base, oreColor[0], oreBrightness), 30, 220);
+                    data[i+1] = clamp(lerp(base - 3, oreColor[1], oreBrightness), 30, 200);
+                    data[i+2] = clamp(lerp(base - 5, oreColor[2], oreBrightness), 30, 200);
                 } else {
-                    data[i] = col[0]; data[i+1] = col[1]; data[i+2] = col[2];
+                    data[i] = clamp(base, 60, 190);
+                    data[i+1] = clamp(base - 3, 55, 185);
+                    data[i+2] = clamp(base - 5, 50, 180);
                 }
                 data[i+3] = 255;
             }
@@ -270,169 +379,67 @@ function createCobblestoneTexture(rng) {
     };
 }
 
-function createBrickTexture(rng) {
-    const brick1 = [165, 80, 60];
-    const brick2 = [145, 70, 50];
-    const mortar = [70, 60, 50];
+function bedrockGenerator(noise) {
     return (data, w, h) => {
         for (let y = 0; y < h; y++) {
             for (let x = 0; x < w; x++) {
                 const i = (y * w + x) * 4;
-                const isHorizMortar = (y % 5 === 4);
-                const offset = (Math.floor(y / 5) % 2) * 4;
-                const isVertMortar = ((x + offset) % 8 === 7);
-                if (isHorizMortar || isVertMortar) {
-                    data[i] = mortar[0]; data[i+1] = mortar[1]; data[i+2] = mortar[2];
-                } else {
-                    const col = ((x + y) % 8 < 4) ? brick1 : brick2;
-                    const shade = shadeColor(col, rng.int(-8, 8));
-                    data[i] = shade[0]; data[i+1] = shade[1]; data[i+2] = shade[2];
-                }
+                const n = fbm2D(noise, x, y, 4, 0.06);
+                const crack = Math.abs(noise.noise2D(x * 0.1, y * 0.1));
+                const darkCrack = crack > 0.48 ? -25 : 0;
+                const base = 50 + n * 20 + darkCrack;
+                data[i] = clamp(base, 25, 90);
+                data[i+1] = clamp(base - 3, 22, 85);
+                data[i+2] = clamp(base - 5, 20, 80);
                 data[i+3] = 255;
             }
         }
     };
 }
 
-function createGravelTexture(rng) {
-    const base = [125, 115, 105];
+function glassGenerator(noise) {
     return (data, w, h) => {
         for (let y = 0; y < h; y++) {
             for (let x = 0; x < w; x++) {
                 const i = (y * w + x) * 4;
-                const n = rng.next();
-                if (n < 0.2) {
-                    const dot = shadeColor(base, rng.int(-30, 30));
-                    data[i] = dot[0]; data[i+1] = dot[1]; data[i+2] = dot[2];
-                } else {
-                    data[i] = base[0]; data[i+1] = base[1]; data[i+2] = base[2];
-                }
-                data[i+3] = 255;
-            }
-        }
-    };
-}
-
-function createSnowTexture(rng) {
-    const white = [240, 245, 250];
-    return (data, w, h) => {
-        for (let y = 0; y < h; y++) {
-            for (let x = 0; x < w; x++) {
-                const i = (y * w + x) * 4;
-                const shade = shadeColor(white, rng.int(-8, 3));
-                data[i] = shade[0]; data[i+1] = shade[1]; data[i+2] = shade[2]; data[i+3] = 255;
-            }
-        }
-    };
-}
-
-function createOreTexture(rng, baseColor, speckColor, speckChance) {
-    return (data, w, h) => {
-        for (let y = 0; y < h; y++) {
-            for (let x = 0; x < w; x++) {
-                const i = (y * w + x) * 4;
-                if (rng.next() < speckChance) {
-                    data[i] = speckColor[0]; data[i+1] = speckColor[1]; data[i+2] = speckColor[2];
-                } else {
-                    const shade = shadeColor(baseColor, rng.int(-12, 12));
-                    data[i] = shade[0]; data[i+1] = shade[1]; data[i+2] = shade[2];
-                }
-                data[i+3] = 255;
-            }
-        }
-    };
-}
-
-function createBedrockTexture(rng) {
-    const base = [55, 50, 45];
-    return (data, w, h) => {
-        for (let y = 0; y < h; y++) {
-            for (let x = 0; x < w; x++) {
-                const i = (y * w + x) * 4;
-                const n = rng.next();
-                if (n < 0.15) {
-                    const dark = [30, 28, 25];
-                    data[i] = dark[0]; data[i+1] = dark[1]; data[i+2] = dark[2];
-                } else if (n < 0.25) {
-                    data[i] = base[0]+15; data[i+1] = base[1]+12; data[i+2] = base[2]+10;
-                } else {
-                    data[i] = base[0]; data[i+1] = base[1]; data[i+2] = base[2];
-                }
-                data[i+3] = 255;
-            }
-        }
-    };
-}
-
-function createGlassTexture(rng) {
-    return (data, w, h) => {
-        for (let y = 0; y < h; y++) {
-            for (let x = 0; x < w; x++) {
-                const i = (y * w + x) * 4;
-                const isBorder = (x === 0 || x === w-1 || y === 0 || y === h-1);
+                const isBorder = x < 3 || x >= w - 3 || y < 3 || y >= h - 3;
+                const n = fbm2D(noise, x, y, 2, 0.04);
                 if (isBorder) {
-                    const v = 180 + rng.int(-20, 20);
-                    data[i] = v; data[i+1] = v; data[i+2] = 255; data[i+3] = 200;
+                    const v = 160 + n * 40;
+                    data[i] = clamp(v, 120, 220);
+                    data[i+1] = clamp(v + 10, 130, 230);
+                    data[i+2] = clamp(v + 40, 160, 255);
+                    data[i+3] = 180;
                 } else {
-                    data[i] = 200; data[i+1] = 220; data[i+2] = 255; data[i+3] = 80;
+                    data[i] = 180 + n * 40;
+                    data[i+1] = 200 + n * 35;
+                    data[i+2] = 230 + n * 25;
+                    data[i+3] = 60;
                 }
             }
         }
     };
 }
 
-function createStoneBrickTexture(rng) {
-    const base = [125, 125, 125];
-    const dark = [100, 100, 100];
-    const mortar = [70, 70, 70];
+function stoneBrickGenerator(noise) {
     return (data, w, h) => {
+        const brickH = 20, brickW = 30;
         for (let y = 0; y < h; y++) {
             for (let x = 0; x < w; x++) {
                 const i = (y * w + x) * 4;
-                const isHoriz = (y % 5 === 4);
-                const isVert = (x % 8 === 7);
-                if (isHoriz || isVert) {
-                    data[i] = mortar[0]; data[i+1] = mortar[1]; data[i+2] = mortar[2]; data[i+3] = 255;
-                } else {
-                    const col = (Math.floor(y/5) + Math.floor(x/8)) % 2 === 0 ? base : dark;
-                    const shade = shadeColor(col, rng.int(-8, 8));
-                    data[i] = shade[0]; data[i+1] = shade[1]; data[i+2] = shade[2]; data[i+3] = 255;
-                }
-            }
-        }
-    };
-}
+                const row = Math.floor(y / brickH);
+                const offset = (row % 2) * (brickW / 2);
+                const isMortarH = (y % brickH) >= brickH - 2;
+                const isMortarV = ((x + offset) % brickW) >= brickW - 2;
 
-function createCraftingTableTopTexture(rng) {
-    const wood = [140, 100, 50];
-    const grid = [80, 55, 25];
-    return (data, w, h) => {
-        for (let y = 0; y < h; y++) {
-            for (let x = 0; x < w; x++) {
-                const i = (y * w + x) * 4;
-                const isGrid = (x % 4 === 3) || (y % 4 === 3);
-                const col = isGrid ? grid : shadeColor(wood, rng.int(-8, 8));
-                data[i] = col[0]; data[i+1] = col[1]; data[i+2] = col[2]; data[i+3] = 255;
-            }
-        }
-    };
-}
-
-function createCraftingTableSideTexture(rng) {
-    const wood = [140, 100, 50];
-    const tool = [100, 80, 60];
-    return (data, w, h) => {
-        for (let y = 0; y < h; y++) {
-            for (let x = 0; x < w; x++) {
-                const i = (y * w + x) * 4;
-                if (y < 4) {
-                    const col = shadeColor(tool, rng.int(-6, 6));
-                    data[i] = col[0]; data[i+1] = col[1]; data[i+2] = col[2];
+                if (isMortarH || isMortarV) {
+                    data[i] = 70; data[i+1] = 65; data[i+2] = 60;
                 } else {
-                    const stripe = (Math.floor(y / 2) % 2 === 0);
-                    const base = stripe ? wood : shadeColor(wood, -15);
-                    const col = shadeColor(base, rng.int(-6, 6));
-                    data[i] = col[0]; data[i+1] = col[1]; data[i+2] = col[2];
+                    const n = fbm2D(noise, x, y, 3, 0.04);
+                    const r = clamp(125 + n * 30, 80, 180);
+                    const g = clamp(122 + n * 28, 78, 175);
+                    const b = clamp(118 + n * 25, 75, 170);
+                    data[i] = r; data[i+1] = g; data[i+2] = b;
                 }
                 data[i+3] = 255;
             }
@@ -440,34 +447,156 @@ function createCraftingTableSideTexture(rng) {
     };
 }
 
-// Each block type: { top, bottom, side } texture indices
-export function createTextureAtlas() {
-    const rng = new SeededRandom(SEED);
+function craftingTableTopGenerator(noise) {
+    return (data, w, h) => {
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const i = (y * w + x) * 4;
+                const n = fbm2D(noise, x, y, 2, 0.03);
+                const gridLine = (Math.floor(x / (w / 4)) !== Math.floor((x - 1) / (w / 4))) ||
+                                 (Math.floor(y / (h / 4)) !== Math.floor((y - 1) / (h / 4)));
+                if (gridLine) {
+                    const gv = 70 + n * 20;
+                    data[i] = gv; data[i+1] = gv * 0.7; data[i+2] = gv * 0.4; data[i+3] = 255;
+                } else {
+                    const r = clamp(150 + n * 30, 110, 200);
+                    const g = clamp(110 + n * 25, 75, 150);
+                    const b = clamp(55 + n * 20, 35, 90);
+                    data[i] = r; data[i+1] = g; data[i+2] = b; data[i+3] = 255;
+                }
+            }
+        }
+    };
+}
 
-    // All texture generators in order
+function craftingTableSideGenerator(noise) {
+    return (data, w, h) => {
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const i = (y * w + x) * 4;
+                const n = fbm2D(noise, x, y, 2, 0.03);
+                const ty = y / h;
+                if (ty < 0.15) {
+                    // 頂部裝飾條
+                    const r = clamp(110 + n * 20, 80, 150);
+                    const g = clamp(85 + n * 15, 60, 115);
+                    const b = clamp(50 + n * 12, 35, 75);
+                    data[i] = r; data[i+1] = g; data[i+2] = b;
+                } else {
+                    const stripe = Math.floor(y / 6) % 2;
+                    const base = stripe ? 145 : 130;
+                    const r = clamp(base + n * 25, 95, 195);
+                    const g = clamp(base * 0.72 + n * 20, 65, 145);
+                    const b = clamp(base * 0.38 + n * 15, 35, 80);
+                    data[i] = r; data[i+1] = g; data[i+2] = b;
+                }
+                data[i+3] = 255;
+            }
+        }
+    };
+}
+
+function furnaceTopGenerator(noise) {
+    return (data, w, h) => {
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const i = (y * w + x) * 4;
+                const n = fbm2D(noise, x, y, 2, 0.03);
+                const cx = w / 2, cy = h / 2;
+                const dist = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2);
+                const inHole = dist < h * 0.25;
+
+                if (inHole) {
+                    const dark = 30 + n * 20 + (dist < h * 0.1 ? 0 : -10);
+                    data[i] = clamp(dark, 15, 60);
+                    data[i+1] = clamp(dark * 0.9, 12, 55);
+                    data[i+2] = clamp(dark * 0.8, 10, 50);
+                } else {
+                    const v = clamp(110 + n * 25, 70, 160);
+                    data[i] = v; data[i+1] = v * 0.95; data[i+2] = v * 0.9;
+                }
+                data[i+3] = 255;
+            }
+        }
+    };
+}
+
+function furnaceSideGenerator(noise) {
+    return (data, w, h) => {
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const i = (y * w + x) * 4;
+                const n = fbm2D(noise, x, y, 2, 0.03);
+                const cx = w / 2, cy = h / 2;
+                const dx = (x - cx), dy = (y - cy);
+                const inDoor = Math.abs(dx) < w * 0.2 && Math.abs(dy) < h * 0.25;
+
+                if (inDoor) {
+                    const v = clamp(50 + n * 15, 30, 85);
+                    data[i] = v; data[i+1] = v * 0.9; data[i+2] = v * 0.8;
+                } else {
+                    const v = clamp(115 + n * 25, 75, 165);
+                    data[i] = v; data[i+1] = v * 0.95; data[i+2] = v * 0.9;
+                }
+                data[i+3] = 255;
+            }
+        }
+    };
+}
+
+// ====== 圖集建立 ======
+export function createTextureAtlas() {
+    const noisePairs = [
+        { noise: new PerlinNoise(101), detail: new PerlinNoise(202) }, // stone
+        { noise: new PerlinNoise(303), detail: null },
+        { noise: new PerlinNoise(404), detail: new PerlinNoise(505) },
+        { noise: new PerlinNoise(606), detail: null },
+        { noise: new PerlinNoise(707), detail: new PerlinNoise(808) },
+        { noise: new PerlinNoise(909), detail: new PerlinNoise(1010) },
+        { noise: new PerlinNoise(1111), detail: null },
+        { noise: new PerlinNoise(1212), detail: null },
+        { noise: new PerlinNoise(1313), detail: new PerlinNoise(1414) },
+        { noise: new PerlinNoise(1515), detail: new PerlinNoise(1616) },
+        { noise: new PerlinNoise(1717), detail: null },
+        { noise: new PerlinNoise(1818), detail: null },
+        { noise: new PerlinNoise(1919), detail: null },
+        { noise: new PerlinNoise(2020), detail: null },
+        { noise: new PerlinNoise(2121), detail: null },
+        { noise: new PerlinNoise(2222), detail: null },
+        { noise: new PerlinNoise(2323), detail: null },
+        { noise: new PerlinNoise(2424), detail: null },
+        { noise: new PerlinNoise(2525), detail: null },
+        { noise: new PerlinNoise(2626), detail: null },
+        { noise: new PerlinNoise(2727), detail: null },
+        { noise: new PerlinNoise(2828), detail: null },
+        { noise: new PerlinNoise(2929), detail: null },
+    ];
+
     const generators = [
-        createGrassTopTexture(rng),           // 0: grass_top
-        createGrassSideTexture(rng),           // 1: grass_side
-        createDirtTexture(rng),                // 2: dirt
-        createStoneTexture(rng),               // 3: stone
-        createWoodSideTexture(rng),            // 4: wood_side
-        createWoodTopTexture(rng),             // 5: wood_top
-        createLeavesTexture(rng),              // 6: leaves
-        createSandTexture(rng),                // 7: sand
-        createPlanksTexture(rng),              // 8: planks
-        createCobblestoneTexture(rng),         // 9: cobblestone
-        createBrickTexture(rng),               // 10: brick
-        createGravelTexture(rng),              // 11: gravel
-        createSnowTexture(rng),                // 12: snow
-        createOreTexture(rng, [130,130,130], [40,40,40], 0.25),    // 13: coal_ore
-        createOreTexture(rng, [130,130,130], [185,160,130], 0.18), // 14: iron_ore
-        createOreTexture(rng, [130,130,130], [235,210,70], 0.12),  // 15: gold_ore
-        createOreTexture(rng, [130,130,130], [120,220,240], 0.10), // 16: diamond_ore
-        createBedrockTexture(rng),             // 17: bedrock
-        createGlassTexture(rng),               // 18: glass
-        createStoneBrickTexture(rng),          // 19: stone_brick
-        createCraftingTableTopTexture(rng),    // 20: crafting_table_top
-        createCraftingTableSideTexture(rng),   // 21: crafting_table_side
+        { fn: (out, w, h) => grassTopGenerator(noisePairs[2].noise, noisePairs[2].detail)(out, w, h), name: 'grass_top' },
+        { fn: (out, w, h) => grassSideGenerator(noisePairs[3].noise)(out, w, h), name: 'grass_side' },
+        { fn: (out, w, h) => dirtGenerator(noisePairs[1].noise)(out, w, h), name: 'dirt' },
+        { fn: (out, w, h) => stoneGenerator(noisePairs[0].noise, noisePairs[0].detail)(out, w, h), name: 'stone' },
+        { fn: (out, w, h) => woodSideGenerator(noisePairs[4].noise, noisePairs[4].detail)(out, w, h), name: 'wood_side' },
+        { fn: (out, w, h) => woodTopGenerator(noisePairs[5].noise, noisePairs[5].detail)(out, w, h), name: 'wood_top' },
+        { fn: (out, w, h) => leavesGenerator(noisePairs[6].noise)(out, w, h), name: 'leaves' },
+        { fn: (out, w, h) => sandGenerator(noisePairs[7].noise)(out, w, h), name: 'sand' },
+        { fn: (out, w, h) => planksGenerator(noisePairs[8].noise, noisePairs[8].detail)(out, w, h), name: 'planks' },
+        { fn: (out, w, h) => cobblestoneGenerator(noisePairs[9].noise, noisePairs[9].detail)(out, w, h), name: 'cobblestone' },
+        { fn: (out, w, h) => brickGenerator(noisePairs[10].noise)(out, w, h), name: 'brick' },
+        { fn: (out, w, h) => gravelGenerator(noisePairs[11].noise)(out, w, h), name: 'gravel' },
+        { fn: (out, w, h) => snowGenerator(noisePairs[12].noise)(out, w, h), name: 'snow' },
+        { fn: (out, w, h) => oreStoneGenerator(noisePairs[13].noise, noisePairs[13].detail, [40, 40, 40], 0.25)(out, w, h), name: 'coal_ore' },
+        { fn: (out, w, h) => oreStoneGenerator(noisePairs[14].noise, noisePairs[14].detail, [185, 160, 130], 0.18)(out, w, h), name: 'iron_ore' },
+        { fn: (out, w, h) => oreStoneGenerator(noisePairs[15].noise, noisePairs[15].detail, [235, 210, 70], 0.12)(out, w, h), name: 'gold_ore' },
+        { fn: (out, w, h) => oreStoneGenerator(noisePairs[16].noise, noisePairs[16].detail, [120, 220, 240], 0.10)(out, w, h), name: 'diamond_ore' },
+        { fn: (out, w, h) => bedrockGenerator(noisePairs[17].noise)(out, w, h), name: 'bedrock' },
+        { fn: (out, w, h) => glassGenerator(noisePairs[18].noise)(out, w, h), name: 'glass' },
+        { fn: (out, w, h) => stoneBrickGenerator(noisePairs[19].noise)(out, w, h), name: 'stone_brick' },
+        { fn: (out, w, h) => craftingTableTopGenerator(noisePairs[20].noise)(out, w, h), name: 'crafting_table_top' },
+        { fn: (out, w, h) => craftingTableSideGenerator(noisePairs[21].noise)(out, w, h), name: 'crafting_table_side' },
+        { fn: (out, w, h) => furnaceTopGenerator(noisePairs[22].noise)(out, w, h), name: 'furnace_top' },
+        { fn: (out, w, h) => furnaceSideGenerator(noisePairs[22].noise)(out, w, h), name: 'furnace_side' },
     ];
 
     const atlasW = ATLAS_COLS * TEX_SIZE;
@@ -478,7 +607,10 @@ export function createTextureAtlas() {
     canvas.height = atlasH;
     const ctx = canvas.getContext('2d');
 
-    generators.forEach((gen, idx) => {
+    const genW = 64, genH = 64;
+
+    for (let idx = 0; idx < generators.length; idx++) {
+        const gen = generators[idx];
         const col = idx % ATLAS_COLS;
         const row = Math.floor(idx / ATLAS_COLS);
         const x = col * TEX_SIZE;
@@ -486,18 +618,19 @@ export function createTextureAtlas() {
 
         ctx.save();
         ctx.translate(x, y);
-        drawPixelated(ctx, TEX_SIZE, TEX_SIZE, gen);
+        drawTexture(ctx, genW, genH, gen.fn);
         ctx.restore();
-    });
+    }
 
     const texture = new THREE.CanvasTexture(canvas);
-    texture.magFilter = THREE.NearestFilter;
-    texture.minFilter = THREE.NearestFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
     texture.wrapS = THREE.ClampToEdgeWrapping;
     texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.generateMipmaps = true;
 
     const cols = ATLAS_COLS;
-    const tileW = 1 / cols;
+    const tileW = TEX_SIZE / atlasW;
     const tileH = TEX_SIZE / atlasH;
 
     function uvRect(idx) {
@@ -506,31 +639,30 @@ export function createTextureAtlas() {
         return {
             u: c * tileW, v: 1 - (r + 1) * tileH,
             u2: (c + 1) * tileW, v2: 1 - r * tileH,
-            w: tileW, h: tileH,
         };
     }
 
-    // Block texture mappings: { top, bottom, side } → atlas index
     const blockTextures = {
-        [GRASS]:    { top: 0, bottom: 2, side: 1 },
-        [DIRT]:     { top: 2, bottom: 2, side: 2 },
-        [STONE]:    { top: 3, bottom: 3, side: 3 },
-        [WOOD]:     { top: 5, bottom: 5, side: 4 },
-        [LEAVES]:   { top: 6, bottom: 6, side: 6 },
-        [SAND]:     { top: 7, bottom: 7, side: 7 },
-        [PLANKS]:   { top: 8, bottom: 8, side: 8 },
+        [GRASS]:       { top: 0, bottom: 2, side: 1 },
+        [DIRT]:        { top: 2, bottom: 2, side: 2 },
+        [STONE]:       { top: 3, bottom: 3, side: 3 },
+        [WOOD]:        { top: 5, bottom: 5, side: 4 },
+        [LEAVES]:      { top: 6, bottom: 6, side: 6 },
+        [SAND]:        { top: 7, bottom: 7, side: 7 },
+        [PLANKS]:      { top: 8, bottom: 8, side: 8 },
         [COBBLESTONE]: { top: 9, bottom: 9, side: 9 },
-        [BRICK]:    { top: 10, bottom: 10, side: 10 },
-        [GRAVEL]:   { top: 11, bottom: 11, side: 11 },
-        [SNOW]:     { top: 12, bottom: 12, side: 12 },
-        [COAL_ORE]: { top: 13, bottom: 13, side: 13 },
-        [IRON_ORE]: { top: 14, bottom: 14, side: 14 },
-        [GOLD_ORE]: { top: 15, bottom: 15, side: 15 },
+        [BRICK]:       { top: 10, bottom: 10, side: 10 },
+        [GRAVEL]:      { top: 11, bottom: 11, side: 11 },
+        [SNOW]:        { top: 12, bottom: 12, side: 12 },
+        [COAL_ORE]:    { top: 13, bottom: 13, side: 13 },
+        [IRON_ORE]:    { top: 14, bottom: 14, side: 14 },
+        [GOLD_ORE]:    { top: 15, bottom: 15, side: 15 },
         [DIAMOND_ORE]: { top: 16, bottom: 16, side: 16 },
-        [BEDROCK]:  { top: 17, bottom: 17, side: 17 },
-        [GLASS]:    { top: 18, bottom: 18, side: 18 },
+        [BEDROCK]:     { top: 17, bottom: 17, side: 17 },
+        [GLASS]:       { top: 18, bottom: 18, side: 18 },
         [STONE_BRICK]: { top: 19, bottom: 19, side: 19 },
         [CRAFTING_TABLE]: { top: 20, bottom: 8, side: 21 },
+        [FURNACE]:     { top: 22, bottom: 22, side: 23 },
     };
 
     function getBlockUVs(blockType, face) {
@@ -541,19 +673,14 @@ export function createTextureAtlas() {
 
     function createBlockPreview(blockType, size = 48) {
         const uv = getBlockUVs(blockType, 'top');
-        const cols = ATLAS_COLS;
-        const tileH = TEX_SIZE / atlasH;
-        const srcX = (uv.u * atlasW);
-        const srcY = canvas.height - (uv.v2 * canvas.height);
-        const srcW = TEX_SIZE;
-        const srcH = TEX_SIZE;
-
+        const srcX = uv.u * atlasW;
+        const srcY = canvas.height - uv.v2 * canvas.height;
         const preview = document.createElement('canvas');
         preview.width = size;
         preview.height = size;
         const pctx = preview.getContext('2d');
-        pctx.imageSmoothingEnabled = false;
-        pctx.drawImage(canvas, srcX, srcY, srcW, srcH, 0, 0, size, size);
+        pctx.imageSmoothingEnabled = true;
+        pctx.drawImage(canvas, srcX, srcY, TEX_SIZE, TEX_SIZE, 0, 0, size, size);
         return preview;
     }
 
