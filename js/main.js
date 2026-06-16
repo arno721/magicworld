@@ -710,14 +710,31 @@ const player = new Player(camera, world);
 const inventory = new Inventory(36, HOTBAR_SIZE);
 const magic = new MagicSystem(world, player, camera, scene, inventory);
 
+// ====== 全域錯誤捕捉 ======
+window.onerror = function(msg, url, line, col, error) {
+    const loadText = document.getElementById('load-text');
+    if (loadText) {
+        loadText.style.color = '#ff5555';
+        loadText.textContent = `❌ 錯誤: ${msg} (第${line}行)`;
+    }
+    console.error(error);
+    return false;
+};
+
 async function start() {
     try {
+        loadText.textContent = '初始化紋理引擎...';
+        await world.init((p, txt) => {
+            loadBar.style.width = Math.round(p * 10) + '%'; // 紋理佔前 10%
+            loadText.textContent = txt;
+        });
+
         loadText.textContent = '生成世界...';
         await new Promise(r => setTimeout(r, 50));
         await new Promise(r => requestAnimationFrame(r));
 
         await world.generateAll((progress, text) => {
-            loadBar.style.width = Math.round(progress * 100) + '%';
+            loadBar.style.width = Math.round(10 + progress * 90) + '%';
             loadText.textContent = text + ` (${Math.round(progress * 100)}%)`;
         });
 

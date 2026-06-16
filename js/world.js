@@ -6,7 +6,7 @@ import {
     AIR, GRASS, DIRT, STONE, WOOD, LEAVES, SAND, REACH_DISTANCE,
     BEDROCK, COAL_ORE, IRON_ORE, GOLD_ORE, DIAMOND_ORE, SNOW
 } from './constants.js';
-import { createTextureAtlas } from './textures.js';
+import { createTextureAtlasAsync } from './textures.js';
 
 export class World {
     constructor(scene) {
@@ -21,7 +21,11 @@ export class World {
         this._loadingQueue = [];
         this._isLoading = false;
         this._surfaceCache = new Map();
-        const atlas = createTextureAtlas();
+        this.textureAtlas = null;
+    }
+
+    async init(onProgress) {
+        const atlas = await createTextureAtlasAsync(onProgress);
         this.textureAtlas = atlas.texture;
         this.getBlockUVs = atlas.getBlockUVs;
         this.createBlockPreview = atlas.createBlockPreview;
@@ -90,9 +94,7 @@ export class World {
             chunk.buildMesh();
             meshDone++;
             if (onProgress) onProgress(0.5 + (meshDone / totalMesh) * 0.5, '構建區塊...');
-            if (meshDone % 2 === 0) {
-                await new Promise(r => setTimeout(r, 1));
-            }
+            await new Promise(r => setTimeout(r, 0));
         }
     }
 
