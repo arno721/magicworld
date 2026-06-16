@@ -20,6 +20,7 @@ export class World {
         this._lastChunkCz = null;
         this._loadingQueue = [];
         this._isLoading = false;
+        this._surfaceCache = new Map();
         const atlas = createTextureAtlas();
         this.textureAtlas = atlas.texture;
         this.getBlockUVs = atlas.getBlockUVs;
@@ -61,7 +62,6 @@ export class World {
         const totalChunks = CHUNKS_X * CHUNKS_Z;
         let done = 0;
 
-        const BATCH = 8;
         for (let cx = 0; cx < CHUNKS_X; cx++) {
             for (let cz = 0; cz < CHUNKS_Z; cz++) {
                 const chunk = new Chunk(cx, cz, this);
@@ -69,16 +69,13 @@ export class World {
                 this.generateChunkData(chunk);
                 done++;
                 if (onProgress) onProgress(done / totalChunks * 0.5, '生成地形...');
-                if (done % BATCH === 0) {
-                    await new Promise(r => setTimeout(r, 0));
-                }
+                await new Promise(r => setTimeout(r, 1));
             }
         }
 
         await this.generateTrees(onProgress);
-        await new Promise(r => setTimeout(r, 0));
+        await new Promise(r => setTimeout(r, 1));
 
-        // 只建立玩家附近區塊的網格
         const centerCx = Math.floor(CHUNKS_X / 2);
         const centerCz = Math.floor(CHUNKS_Z / 2);
         let meshDone = 0;
@@ -94,8 +91,8 @@ export class World {
             chunk.buildMesh();
             meshDone++;
             if (onProgress) onProgress(0.5 + (meshDone / totalMesh) * 0.5, '構建區塊...');
-            if (meshDone % BATCH === 0) {
-                await new Promise(r => setTimeout(r, 0));
+            if (meshDone % 2 === 0) {
+                await new Promise(r => setTimeout(r, 1));
             }
         }
     }
@@ -107,6 +104,8 @@ export class World {
             for (let lz = 0; lz < CHUNK_SIZE; lz++) {
                 const wx = ox + lx;
                 const wz = oz + lz;
+                const key = `${wx},${wz}`;
+                if (this._surfaceCache.has(key)) continue;
 
                 const heightNoise = this.perlin.octave2D(wx * 0.025, wz * 0.025, 6, 0.55, 2.0);
                 const detailNoise = this.perlin.octave2D(wx * 0.06, wz * 0.06, 3, 0.3, 2.5) * 3;
@@ -114,6 +113,7 @@ export class World {
 
                 let surfaceY = Math.floor(24 + heightNoise * 20 + detailNoise + ridgeNoise * 6);
                 surfaceY = Math.max(4, Math.min(WORLD_HEIGHT - 8, surfaceY));
+                this._surfaceCache.set(key, surfaceY);
                 const isSandy = surfaceY < 16 && heightNoise < -0.2;
 
                 const biomeTemp = this.perlin.octave2D(wx * 0.008, wz * 0.008, 3, 0.5, 2.0);
@@ -127,8 +127,8 @@ export class World {
                         else if (y === 2) { block = Math.random() < 0.3 ? BEDROCK : STONE; }
                         else { block = STONE; }
                     } else if (y < surfaceY - 4) {
-                        const caveVal = this.cavePerlin.octave3D(wx * 0.05, y * 0.05, wz * 0.05, 4, 0.5, 2.0);
-                        const caveVal2 = this.cavePerlin.octave3D(wx * 0.08, y * 0.08, wz * 0.08, 3, 0.4, 2.3);
+                        const caveVal = this.cavePerlin.octave3D(wx * 0.05, y * 0.05, wz * 0.05, 3, 0.5, 2.0);
+                        const caveVal2 = this.cavePerlin.octave3D(wx * 0.08, y * 0.08, wz * 0.08, 2, 0.4, 2.3);
                         const isCave = (Math.abs(caveVal) < 0.20) || (Math.abs(caveVal2) < 0.16 && y > 6 && y < surfaceY - 8);
                         if (isCave && y > 2) {
                             block = AIR;
@@ -167,6 +167,8 @@ export class World {
     }
 
     findSurfaceY(wx, wz) {
+        const key = `${wx},${wz}`;
+        if (this._surfaceCache.has(key)) return this._surfaceCache.get(key);
         for (let y = WORLD_HEIGHT - 1; y >= 0; y--) {
             if (this.getBlock(wx, y, wz) !== AIR) return y;
         }
@@ -175,7 +177,6 @@ export class World {
 
     async generateTrees(onProgress) {
         let count = 0;
-        const total = CHUNKS_X * CHUNK_SIZE * CHUNKS_Z * CHUNK_SIZE;
         for (let cx = 0; cx < CHUNKS_X; cx++) {
             for (let cz = 0; cz < CHUNKS_Z; cz++) {
                 const chunk = this.getChunk(cx, cz);
@@ -197,8 +198,8 @@ export class World {
                             this.placeTree(wx, surfaceY + 1, wz, trunkHeight);
                         }
                         count++;
-                        if (count % 300 === 0) {
-                            if (onProgress) onProgress(0.5 + (count / total) * 0.05, '種植樹木...');
+                        if (count % 100 === 0) {
+                            if (onProgress) onProgress(0.5, '種植樹木...');
                             await new Promise(r => setTimeout(r, 0));
                         }
                     }
@@ -211,10 +212,8 @@ export class World {
         for (let dy = 0; dy < trunkHeight; dy++) {
             this.setBlockRaw(wx, baseY + dy, wz, WOOD);
         }
-
         const crownBase = baseY + trunkHeight - 3;
         const lea = this.treePerlin;
-
         for (let layer = 0; layer < 4; layer++) {
             const cy = crownBase + layer;
             let radius;
@@ -222,17 +221,14 @@ export class World {
             else if (layer === 1) radius = 2.5;
             else if (layer === 2) radius = 1.8;
             else radius = 1.0;
-
             for (let dx = -Math.ceil(radius); dx <= Math.ceil(radius); dx++) {
                 for (let dz = -Math.ceil(radius); dz <= Math.ceil(radius); dz++) {
                     const dist = Math.sqrt(dx * dx + dz * dz);
                     if (dist > radius + 0.01) continue;
                     if (dx === 0 && dz === 0 && layer < 3) continue;
-
                     const r = lea.noise2D((wx + dx) * 7.3 + layer * 3.7, (wz + dz) * 7.3 + layer * 3.7);
                     const threshold = -0.2 + (dist / radius) * 0.6;
                     if (r < threshold) continue;
-
                     const bx = wx + dx;
                     const bz = wz + dz;
                     if (this.getBlock(bx, cy, bz) === AIR) {
@@ -241,7 +237,6 @@ export class World {
                 }
             }
         }
-
         const topY = crownBase + 4;
         if (this.getBlock(wx, topY, wz) === AIR) {
             this.setBlockRaw(wx, topY, wz, LEAVES);
@@ -299,7 +294,6 @@ export class World {
             }
         }
 
-        // 非同步載入新區塊（每幀最多 2 個）
         if (toLoad.length > 0 && !this._isLoading) {
             this._isLoading = true;
             this._loadingQueue = toLoad;
