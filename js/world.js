@@ -295,7 +295,7 @@ export class World {
             if (dist <= radius) {
                 if (!chunk.mesh) toLoad.push(chunk);
             } else {
-                if (chunk.mesh) chunk.dispose();
+                if (chunk.mesh) chunk.removeMesh();
             }
         }
 

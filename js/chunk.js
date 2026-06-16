@@ -134,13 +134,17 @@ export class Chunk {
         this.dirty = false;
     }
 
-    dispose() {
+    removeMesh() {
         if (this.mesh) {
             this.mesh.geometry.dispose();
             this.mesh.material.dispose();
             this.world.scene.remove(this.mesh);
             this.mesh = null;
         }
+    }
+
+    dispose() {
+        this.removeMesh();
         this.data = null;
     }
 }
