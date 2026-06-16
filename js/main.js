@@ -59,39 +59,91 @@ const overlayMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: t
 const overlayMesh = new THREE.LineSegments(overlayGeo, overlayMat);
 overlayMesh.visible = false;
 
-// ====== 天空盒（漸層） ======
+// ====== 天空盒（雲朵+太陽） ======
+const skyUniforms = {
+    topColor: { value: new THREE.Color(0x0066cc) },
+    horizonColor: { value: new THREE.Color(0x87CEEB) },
+    bottomColor: { value: new THREE.Color(0xccddee) },
+    cloudColor1: { value: new THREE.Color(0xffffff) },
+    cloudColor2: { value: new THREE.Color(0xc8d0d8) },
+    sunColor: { value: new THREE.Color(0xffdd44) },
+    sunDir: { value: new THREE.Vector3(0.3, 0.7, 0.5).normalize() },
+    time: { value: 0 },
+};
+
 function createSky() {
-    const skyGeo = new THREE.SphereGeometry(400, 32, 15);
+    const skyGeo = new THREE.SphereGeometry(400, 64, 40);
     const skyMat = new THREE.ShaderMaterial({
         side: THREE.BackSide,
-        uniforms: {
-            topColor: { value: new THREE.Color(0x0077ff) },
-            bottomColor: { value: new THREE.Color(0x87CEEB) },
-            offset: { value: 20 },
-            exponent: { value: 0.6 },
-        },
+        uniforms: skyUniforms,
         vertexShader: `
-            varying vec3 vWorldPosition;
+            varying vec3 vPos;
+            varying vec3 vNorm;
             void main() {
-                vec4 worldPos = modelMatrix * vec4(position, 1.0);
-                vWorldPosition = worldPos.xyz;
+                vec4 wp = modelMatrix * vec4(position, 1.0);
+                vPos = wp.xyz;
+                vNorm = normalize(normalMatrix * normal);
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
             }
         `,
         fragmentShader: `
             uniform vec3 topColor;
+            uniform vec3 horizonColor;
             uniform vec3 bottomColor;
-            uniform float offset;
-            uniform float exponent;
-            varying vec3 vWorldPosition;
+            uniform vec3 cloudColor1;
+            uniform vec3 cloudColor2;
+            uniform vec3 sunColor;
+            uniform vec3 sunDir;
+            uniform float time;
+            varying vec3 vPos;
+            varying vec3 vNorm;
+
+            float hash(vec2 p) {
+                return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+            }
+            float noise(vec2 p) {
+                vec2 i = floor(p);
+                vec2 f = fract(p);
+                f = f * f * (3.0 - 2.0 * f);
+                return mix(mix(hash(i), hash(i + vec2(1.0,0.0)), f.x),
+                           mix(hash(i + vec2(0.0,1.0)), hash(i + vec2(1.0,1.0)), f.x), f.y);
+            }
+            float fbm(vec2 p) {
+                float v = 0.0, a = 0.5;
+                for (int i = 0; i < 4; i++) { v += a * noise(p); p *= 2.0; a *= 0.5; }
+                return v;
+            }
+
             void main() {
-                float h = normalize(vWorldPosition + offset).y;
-                gl_FragColor = vec4(mix(bottomColor, topColor, max(pow(max(h, 0.0), exponent), 0.0)), 1.0);
+                vec3 dir = normalize(vPos);
+                float h = dir.y;
+                float skyMix = smoothstep(-0.05, 0.5, h);
+                vec3 skyCol = mix(horizonColor, topColor, skyMix);
+
+                // 雲層
+                vec2 uv = dir.xz / (abs(dir.y) + 0.15) * 0.025;
+                uv += time * 0.003;
+                float c = fbm(uv);
+                float cm = smoothstep(0.35, 0.7, c);
+                float hMask = 1.0 - smoothstep(0.05, 0.5, abs(h));
+                cm *= hMask;
+                vec3 cloudCol = mix(cloudColor2, cloudColor1, cm);
+                skyCol = mix(skyCol, cloudCol, cm * 0.85);
+
+                // 太陽
+                float sa = max(dot(dir, sunDir), 0.0);
+                float disk = smoothstep(0.9998, 1.0, sa);
+                float glow = pow(sa, 24.0) * 0.5;
+                float halo = pow(sa, 6.0) * 0.15;
+                skyCol += sunColor * disk * 3.0;
+                skyCol += sunColor * glow;
+                skyCol += sunColor * halo;
+
+                gl_FragColor = vec4(skyCol, 1.0);
             }
         `,
     });
-    const sky = new THREE.Mesh(skyGeo, skyMat);
-    return sky;
+    return new THREE.Mesh(skyGeo, skyMat);
 }
 
 function selectSlot(index) {
@@ -227,7 +279,7 @@ function toggleInventory() {
 function toggleEsc() {
     escOpen = !escOpen;
     document.getElementById('esc-menu').style.display = escOpen ? 'flex' : 'none';
-    document.getElementById('pause-indicator').style.display = escOpen ? 'block' : 'none';
+
     if (escOpen) {
         document.exitPointerLock();
     } else if (!inventoryOpen) {
@@ -584,7 +636,7 @@ document.getElementById('respawn-btn')?.addEventListener('click', () => {
 
 // ====== 渲染器設定 ======
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -594,7 +646,7 @@ container.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87CEEB);
-scene.fog = new THREE.Fog(0x87CEEB, 80, 200);
+scene.fog = new THREE.Fog(0x87CEEB, 60, 120);
 
 const sky = createSky();
 scene.add(sky);
@@ -608,11 +660,12 @@ scene.add(hemi);
 const ambient = new THREE.AmbientLight(0x445566, 0.3);
 scene.add(ambient);
 
+const sunLightPos = new THREE.Vector3(80, 120, 60);
 const sun = new THREE.DirectionalLight(0xfff0d0, 2.5);
-sun.position.set(80, 120, 60);
+sun.position.copy(sunLightPos);
 sun.castShadow = true;
-sun.shadow.mapSize.width = 4096;
-sun.shadow.mapSize.height = 4096;
+sun.shadow.mapSize.width = 2048;
+sun.shadow.mapSize.height = 2048;
 sun.shadow.camera.left = -120;
 sun.shadow.camera.right = 120;
 sun.shadow.camera.top = 120;
@@ -621,6 +674,21 @@ sun.shadow.normalBias = 0.02;
 sun.shadow.bias = -0.001;
 sun.shadow.radius = 4;
 scene.add(sun);
+
+// 太陽視覺
+const sunSphere = new THREE.Mesh(
+    new THREE.SphereGeometry(5, 12, 12),
+    new THREE.MeshBasicMaterial({ color: 0xffdd44 })
+);
+sunSphere.position.copy(sunLightPos);
+scene.add(sunSphere);
+const sunGlow = new THREE.Mesh(
+    new THREE.SphereGeometry(10, 12, 12),
+    new THREE.MeshBasicMaterial({ color: 0xffdd44, transparent: true, opacity: 0.12 })
+);
+sunGlow.position.copy(sunLightPos);
+scene.add(sunGlow);
+skyUniforms.sunDir.value.copy(sunLightPos).normalize();
 
 // 補光（從背面）
 const fill = new THREE.DirectionalLight(0x8899cc, 0.6);
@@ -679,6 +747,7 @@ async function start() {
         setTimeout(() => { loadingEl.style.display = 'none'; }, 600);
 
         const clock = new THREE.Clock();
+        let frameCount = 0;
         function animate() {
             requestAnimationFrame(animate);
             const delta = clock.getDelta();
@@ -689,6 +758,15 @@ async function start() {
                 magic.updateLights();
                 updateTargetBlock();
             }
+
+            // 動態區塊載入（每 15 幀檢查一次）
+            frameCount++;
+            if (frameCount % 15 === 0 && isLocked) {
+                world.updateChunkLoading(player.position.x, player.position.z);
+            }
+
+            // 雲朵動畫
+            skyUniforms.time.value += delta * 0.3;
 
             updateHUD();
             world.updateDirtyChunks();
