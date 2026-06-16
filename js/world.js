@@ -15,7 +15,7 @@ export class World {
         this.perlin = new PerlinNoise(137);
         this.cavePerlin = new PerlinNoise(259);
         this.treePerlin = new PerlinNoise(381);
-        this.renderDistance = 6;
+        this.renderDistance = 5;
         this._lastChunkCx = null;
         this._lastChunkCz = null;
         this._loadingQueue = [];

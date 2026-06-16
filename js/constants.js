@@ -1,8 +1,8 @@
 // 世界與方塊常量
 export const CHUNK_SIZE = 16;
 export const WORLD_HEIGHT = 128;
-export const CHUNKS_X = 15;
-export const CHUNKS_Z = 15;
+export const CHUNKS_X = 11;
+export const CHUNKS_Z = 11;
 export const WORLD_SIZE_X = CHUNKS_X * CHUNK_SIZE;
 export const WORLD_SIZE_Z = CHUNKS_Z * CHUNK_SIZE;
 export const GRAVITY = 24;
