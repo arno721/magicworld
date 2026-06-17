@@ -151,49 +151,74 @@ function basicGen(r, g, b) { return (data, w, h) => { for(let i=0; i<w*h*4; i+=4
 
 // ====== 圖集建立 (ASYNC) ======
 export async function createTextureAtlasAsync(onProgress) {
-    const noisePairs = Array(24).fill(0).map((_, i) => ({ noise: new PerlinNoise(100 + i), detail: new PerlinNoise(200 + i) }));
-
-    const generators = [
-        { fn: grassTopGenerator(noisePairs[2].noise, noisePairs[2].detail), name: 'grass_top' },
-        { fn: grassSideGenerator(noisePairs[3].noise), name: 'grass_side' },
-        { fn: dirtGenerator(noisePairs[1].noise), name: 'dirt' },
-        { fn: stoneGenerator(noisePairs[0].noise, noisePairs[0].detail), name: 'stone' },
-        { fn: woodSideGenerator(noisePairs[4].noise, noisePairs[4].detail), name: 'wood_side' },
-        { fn: (out, w, h) => basicGen(150, 100, 50)(out, w, h), name: 'wood_top' },
-        { fn: leavesGenerator(noisePairs[6].noise), name: 'leaves' },
-        { fn: (out, w, h) => basicGen(220, 200, 150)(out, w, h), name: 'sand' },
-        { fn: (out, w, h) => basicGen(160, 120, 60)(out, w, h), name: 'planks' },
-        { fn: (out, w, h) => basicGen(100, 100, 100)(out, w, h), name: 'cobblestone' },
-        { fn: (out, w, h) => basicGen(180, 80, 60)(out, w, h), name: 'brick' },
-        { fn: (out, w, h) => basicGen(120, 120, 120)(out, w, h), name: 'gravel' },
-        { fn: (out, w, h) => basicGen(240, 240, 255)(out, w, h), name: 'snow' },
-        { fn: oreStoneGenerator(noisePairs[13].noise, noisePairs[13].detail, [40, 40, 40], 0.25), name: 'coal_ore' },
-        { fn: oreStoneGenerator(noisePairs[14].noise, noisePairs[14].detail, [185, 160, 130], 0.18), name: 'iron_ore' },
-        { fn: oreStoneGenerator(noisePairs[15].noise, noisePairs[15].detail, [235, 210, 70], 0.12), name: 'gold_ore' },
-        { fn: oreStoneGenerator(noisePairs[16].noise, noisePairs[16].detail, [120, 220, 240], 0.10), name: 'diamond_ore' },
-        { fn: (out, w, h) => basicGen(50, 50, 50)(out, w, h), name: 'bedrock' },
-        { fn: (out, w, h) => basicGen(180, 220, 255)(out, w, h), name: 'glass' }, // 後續處理透明度
-        { fn: (out, w, h) => basicGen(120, 120, 125)(out, w, h), name: 'stone_brick' },
-        { fn: (out, w, h) => basicGen(150, 110, 60)(out, w, h), name: 'crafting_table_top' },
-        { fn: (out, w, h) => basicGen(130, 90, 50)(out, w, h), name: 'crafting_table_side' },
-        { fn: (out, w, h) => basicGen(100, 100, 100)(out, w, h), name: 'furnace_top' },
-        { fn: (out, w, h) => basicGen(90, 90, 90)(out, w, h), name: 'furnace_side' },
+    const TEX_SIZE = 128;
+    const ATLAS_COLS = 8;
+    
+    // 寫實高清網絡圖片 URL 列表
+    const textureUrls = [
+        "https://images.unsplash.com/photo-1533460004989-cef01064af7e?auto=format&fit=crop&w=128&q=80", // 0: grass_top (草地)
+        "https://images.unsplash.com/photo-1552288092-76e7d732366c?auto=format&fit=crop&w=128&q=80", // 1: grass_side (草地側面/帶點泥土)
+        "https://images.unsplash.com/photo-1587834571064-16a7f5d9cbfa?auto=format&fit=crop&w=128&q=80", // 2: dirt (泥土)
+        "https://images.unsplash.com/photo-1525926472898-7517c569f658?auto=format&fit=crop&w=128&q=80", // 3: stone (石頭)
+        "https://images.unsplash.com/photo-1546484396-fb3f6af2005b?auto=format&fit=crop&w=128&q=80", // 4: wood_side (樹皮)
+        "https://images.unsplash.com/photo-1550664890-c1e14ddeecad?auto=format&fit=crop&w=128&q=80", // 5: wood_top (原木頂部)
+        "https://images.unsplash.com/photo-1542385151-efd9000785a0?auto=format&fit=crop&w=128&q=80", // 6: leaves (樹葉)
+        "https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=128&q=80", // 7: sand (沙子)
+        "https://images.unsplash.com/photo-1511516091090-e7178c78a05c?auto=format&fit=crop&w=128&q=80", // 8: planks (木板)
+        "https://images.unsplash.com/photo-1518098268026-4e89f1a2cb8b?auto=format&fit=crop&w=128&q=80", // 9: cobblestone (鵝卵石)
+        "https://images.unsplash.com/photo-1517646287270-a5a9ca602518?auto=format&fit=crop&w=128&q=80", // 10: brick (紅磚)
+        "https://images.unsplash.com/photo-1496055401924-5e7fdc885742?auto=format&fit=crop&w=128&q=80", // 11: gravel (礫石)
+        "https://images.unsplash.com/photo-1542601098-8fc114e148e2?auto=format&fit=crop&w=128&q=80", // 12: snow (雪)
+        "https://images.unsplash.com/photo-1620380757270-e4b2d39999a4?auto=format&fit=crop&w=128&q=80", // 13: coal_ore (煤礦)
+        "https://images.unsplash.com/photo-1587840180479-7c427f71b96a?auto=format&fit=crop&w=128&q=80", // 14: iron_ore (鐵礦)
+        "https://images.unsplash.com/photo-1618365908648-e71bb5718361?auto=format&fit=crop&w=128&q=80", // 15: gold_ore (金礦)
+        "https://images.unsplash.com/photo-1579546929518-9e396f3cc809?auto=format&fit=crop&w=128&q=80", // 16: diamond_ore (鑽石礦)
+        "https://images.unsplash.com/photo-1601662528567-526cd06f6582?auto=format&fit=crop&w=128&q=80", // 17: bedrock (基岩)
+        "https://images.unsplash.com/photo-1522204523234-8729aa6e3d5f?auto=format&fit=crop&w=128&q=80", // 18: glass (玻璃)
+        "https://images.unsplash.com/photo-1525926472898-7517c569f658?auto=format&fit=crop&w=128&q=80", // 19: stone_brick (石磚)
+        "https://images.unsplash.com/photo-1511516091090-e7178c78a05c?auto=format&fit=crop&w=128&q=80", // 20: crafting_table_top (工作台頂部)
+        "https://images.unsplash.com/photo-1546484396-fb3f6af2005b?auto=format&fit=crop&w=128&q=80", // 21: crafting_table_side (工作台側面)
+        "https://images.unsplash.com/photo-1518098268026-4e89f1a2cb8b?auto=format&fit=crop&w=128&q=80", // 22: furnace_top (熔爐頂部)
+        "https://images.unsplash.com/photo-1620380757270-e4b2d39999a4?auto=format&fit=crop&w=128&q=80"  // 23: furnace_side (熔爐側面)
     ];
 
     const atlasW = ATLAS_COLS * TEX_SIZE;
-    const atlasH = Math.ceil(generators.length / ATLAS_COLS) * TEX_SIZE;
+    const atlasH = Math.ceil(textureUrls.length / ATLAS_COLS) * TEX_SIZE;
     const canvas = document.createElement('canvas');
     canvas.width = atlasW; canvas.height = atlasH;
     const ctx = canvas.getContext('2d');
 
-    for (let idx = 0; idx < generators.length; idx++) {
-        const gen = generators[idx];
+    // 載入圖片的輔助函數
+    const loadImage = (url) => new Promise((resolve) => {
+        const img = new Image();
+        img.crossOrigin = "Anonymous";
+        img.onload = () => resolve(img);
+        img.onerror = () => {
+            // 下載失敗時返回一個填滿顏色的 Canvas 作為備用
+            const fallback = document.createElement('canvas');
+            fallback.width = TEX_SIZE; fallback.height = TEX_SIZE;
+            const fctx = fallback.getContext('2d');
+            fctx.fillStyle = '#888';
+            fctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
+            resolve(fallback);
+        };
+        img.src = url;
+    });
+
+    for (let idx = 0; idx < textureUrls.length; idx++) {
         const x = (idx % ATLAS_COLS) * TEX_SIZE;
         const y = Math.floor(idx / ATLAS_COLS) * TEX_SIZE;
-        ctx.save(); ctx.translate(x, y);
-        drawTexture(ctx, 128, 128, gen.fn);
-        ctx.restore();
-        if (onProgress) onProgress(idx / generators.length, `生成紋理 ${gen.name}...`);
+        
+        if (onProgress) onProgress(idx / textureUrls.length, `下載高清紋理 ${idx + 1}/${textureUrls.length}...`);
+        
+        const img = await loadImage(textureUrls[idx]);
+        ctx.drawImage(img, x, y, TEX_SIZE, TEX_SIZE);
+        
+        // 特殊處理玻璃的半透明
+        if (idx === 18) {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+            ctx.fillRect(x, y, TEX_SIZE, TEX_SIZE);
+        }
         await new Promise(r => setTimeout(r, 0));
     }
 

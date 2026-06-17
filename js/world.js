@@ -78,6 +78,9 @@ export class World {
 
         await this.generateTrees(onProgress);
         await new Promise(r => setTimeout(r, 1));
+        
+        await this.generateStructures(onProgress);
+        await new Promise(r => setTimeout(r, 1));
 
         const centerCx = Math.floor(CHUNKS_X / 2);
         const centerCz = Math.floor(CHUNKS_Z / 2);
@@ -129,10 +132,17 @@ export class World {
                         else if (y === 2) { block = Math.random() < 0.3 ? BEDROCK : STONE; }
                         else { block = STONE; }
                     } else if (y < surfaceY - 4) {
-                        const caveVal = this.cavePerlin.octave3D(wx * 0.05, y * 0.05, wz * 0.05, 3, 0.5, 2.0);
-                        const caveVal2 = this.cavePerlin.octave3D(wx * 0.08, y * 0.08, wz * 0.08, 2, 0.4, 2.3);
-                        const isCave = (Math.abs(caveVal) < 0.20) || (Math.abs(caveVal2) < 0.16 && y > 6 && y < surfaceY - 8);
-                        if (isCave && y > 2) {
+                        // Minecraft-style Caves
+                        // 麵條洞 (Spaghetti caves) - 蜿蜒的管狀
+                        const ridge1 = Math.abs(this.cavePerlin.octave3D(wx * 0.04, y * 0.04, wz * 0.04, 3, 0.5, 2.0));
+                        const ridge2 = Math.abs(this.cavePerlin.octave3D(wx * 0.04 + 100, y * 0.04 + 100, wz * 0.04 + 100, 3, 0.5, 2.0));
+                        const isSpaghetti = ridge1 < 0.04 && ridge2 < 0.04;
+                        
+                        // 起司洞 (Cheese caves) - 大空間
+                        const cheese = this.cavePerlin.octave3D(wx * 0.02, y * 0.02, wz * 0.02, 2, 0.5, 2.0);
+                        const isCheese = cheese > 0.6 && y > 6 && y < surfaceY - 10;
+
+                        if ((isSpaghetti || isCheese) && y > 2) {
                             block = AIR;
                         } else {
                             block = STONE;
@@ -216,47 +226,169 @@ export class World {
         }
     }
 
-    placeTree(wx, baseY, wz, trunkHeight) {
-        for (let dy = 0; dy < trunkHeight; dy++) {
-            this.setBlockRaw(wx, baseY + dy, wz, WOOD);
+    async generateStructures(onProgress) {
+        let count = 0;
+        const total = CHUNKS_X * CHUNKS_Z;
+        for (let cx = 0; cx < CHUNKS_X; cx++) {
+            for (let cz = 0; cz < CHUNKS_Z; cz++) {
+                // 利用低頻噪聲判斷村莊生成點
+                if (this.treePerlin.noise2D(cx * 13.7, cz * 13.7) > 0.85) {
+                    const wx = cx * CHUNK_SIZE + 8;
+                    const wz = cz * CHUNK_SIZE + 8;
+                    const sy = this.findSurfaceY(wx, wz);
+                    
+                    // 村莊不能生成在太陡峭或水裡的地方
+                    if (sy > 16 && sy < WORLD_HEIGHT - 20) {
+                        this.buildVillage(wx, sy, wz);
+                    }
+                }
+                count++;
+                if (count % 5 === 0) {
+                    if (onProgress) onProgress(0.5, '生成村莊結構...');
+                    await new Promise(r => setTimeout(r, 0));
+                }
+            }
         }
-        const crownBase = baseY + trunkHeight - 3;
-        const lea = this.treePerlin;
-        for (let layer = 0; layer < 4; layer++) {
-            const cy = crownBase + layer;
-            let radius;
-            if (layer === 0) radius = 2.3;
-            else if (layer === 1) radius = 2.5;
-            else if (layer === 2) radius = 1.8;
-            else radius = 1.0;
-            for (let dx = -Math.ceil(radius); dx <= Math.ceil(radius); dx++) {
-                for (let dz = -Math.ceil(radius); dz <= Math.ceil(radius); dz++) {
-                    const dist = Math.sqrt(dx * dx + dz * dz);
-                    if (dist > radius + 0.01) continue;
-                    if (dx === 0 && dz === 0 && layer < 3) continue;
-                    const r = lea.noise2D((wx + dx) * 7.3 + layer * 3.7, (wz + dz) * 7.3 + layer * 3.7);
-                    const threshold = -0.2 + (dist / radius) * 0.6;
-                    if (r < threshold) continue;
-                    const bx = wx + dx;
-                    const bz = wz + dz;
-                    if (this.getBlock(bx, cy, bz) === AIR) {
-                        this.setBlockRaw(bx, cy, bz, LEAVES);
+    }
+
+    buildVillage(centerX, baseY, centerZ) {
+        // 1. 水井 (中心)
+        for (let x = -2; x <= 2; x++) {
+            for (let z = -2; z <= 2; z++) {
+                const wx = centerX + x, wz = centerZ + z;
+                const dist = Math.max(Math.abs(x), Math.abs(z));
+                const sy = this.findSurfaceY(wx, wz);
+                
+                // 平整地基
+                for (let y = sy; y > baseY - 1; y--) this.setBlockRaw(wx, y, wz, AIR);
+                for (let y = sy; y <= baseY; y++) this.setBlockRaw(wx, y, wz, DIRT);
+                
+                if (dist === 2) {
+                    this.setBlockRaw(wx, baseY, wz, COBBLESTONE); // 外圈
+                } else if (dist === 1) {
+                    this.setBlockRaw(wx, baseY, wz, COBBLESTONE); // 井壁
+                    this.setBlockRaw(wx, baseY + 1, wz, COBBLESTONE);
+                    this.setBlockRaw(wx, baseY + 3, wz, PLANKS); // 屋頂邊緣
+                } else if (dist === 0) {
+                    for (let y = baseY - 10; y <= baseY; y++) this.setBlockRaw(wx, y, wz, AIR); // 井底
+                    this.setBlockRaw(wx, baseY - 10, wz, WATER);
+                    this.setBlockRaw(wx, baseY + 3, wz, PLANKS); // 井頂
+                }
+            }
+        }
+
+        // 2. 十字道路
+        const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+        for (let [dx, dz] of dirs) {
+            let cx = centerX + dx * 3, cz = centerZ + dz * 3;
+            for (let i = 0; i < 20; i++) {
+                const w = Math.floor(i / 10) + 1; // 道路逐漸變窄
+                for (let hw = -w; hw <= w; hw++) {
+                    let rx = cx + (dx === 0 ? hw : 0);
+                    let rz = cz + (dz === 0 ? hw : 0);
+                    let ry = this.findSurfaceY(rx, rz);
+                    if (this.getBlock(rx, ry, rz) === GRASS) {
+                        this.setBlockRaw(rx, ry, rz, Math.random() > 0.5 ? GRAVEL : DIRT);
+                    }
+                }
+                cx += dx; cz += dz;
+            }
+        }
+
+        // 3. 房屋生成 (在道路兩側隨機生成 2-3 棟)
+        let houseCount = 0;
+        for (let i = 0; i < 20 && houseCount < 3; i++) {
+            const hx = centerX + (Math.random() - 0.5) * 30;
+            const hz = centerZ + (Math.random() - 0.5) * 30;
+            if (Math.abs(hx - centerX) < 8 && Math.abs(hz - centerZ) < 8) continue; // 遠離中心
+            
+            const hy = this.findSurfaceY(Math.floor(hx), Math.floor(hz));
+            if (hy > baseY - 3 && hy < baseY + 3) {
+                this.buildHouse(Math.floor(hx), hy, Math.floor(hz));
+                houseCount++;
+            }
+        }
+    }
+
+    buildHouse(ox, oy, oz) {
+        const w = 5, d = 5, h = 4;
+        // 地基與清除空間
+        for (let x = 0; x < w; x++) {
+            for (let z = 0; z < d; z++) {
+                const wx = ox + x, wz = oz + z;
+                let sy = this.findSurfaceY(wx, wz);
+                for (let y = sy; y >= oy; y--) this.setBlockRaw(wx, y, wz, AIR); // 清空上方
+                this.setBlockRaw(wx, oy, wz, COBBLESTONE); // 地板
+            }
+        }
+        
+        // 牆壁
+        for (let y = 1; y <= h; y++) {
+            for (let x = 0; x < w; x++) {
+                for (let z = 0; z < d; z++) {
+                    const wx = ox + x, wz = oz + z;
+                    const isCorner = (x === 0 || x === w - 1) && (z === 0 || z === d - 1);
+                    const isWall = x === 0 || x === w - 1 || z === 0 || z === d - 1;
+                    
+                    if (isCorner) {
+                        this.setBlockRaw(wx, oy + y, wz, WOOD); // 原木角落
+                    } else if (isWall) {
+                        // 窗戶
+                        if (y === 2 && x === 2) {
+                            this.setBlockRaw(wx, oy + y, wz, GLASS);
+                        } else if (y <= 2 && x === 0 && z === 2) {
+                            this.setBlockRaw(wx, oy + y, wz, AIR); // 門
+                        } else {
+                            this.setBlockRaw(wx, oy + y, wz, PLANKS); // 木板牆
+                        }
                     }
                 }
             }
         }
-        const topY = crownBase + 4;
-        if (this.getBlock(wx, topY, wz) === AIR) {
-            this.setBlockRaw(wx, topY, wz, LEAVES);
+        
+        // 金字塔屋頂
+        for (let y = 0; y < 3; y++) {
+            for (let x = y; x < w - y; x++) {
+                for (let z = y; z < d - y; z++) {
+                    const isEdge = x === y || x === w - 1 - y || z === y || z === d - 1 - y;
+                    if (isEdge || y === 2) {
+                        this.setBlockRaw(ox + x, oy + h + y, oz + z, PLANKS);
+                    }
+                }
+            }
         }
-        for (let dx = -1; dx <= 1; dx++) {
-            for (let dz = -1; dz <= 1; dz++) {
-                if (dx === 0 && dz === 0) continue;
-                if (Math.abs(dx) + Math.abs(dz) > 1) continue;
-                const r = lea.noise2D((wx + dx) * 5.1, (wz + dz) * 5.1);
-                if (r > 0.3) {
-                    if (this.getBlock(wx + dx, topY, wz + dz) === AIR) {
-                        this.setBlockRaw(wx + dx, topY, wz + dz, LEAVES);
+    }
+
+    placeTree(wx, baseY, wz, trunkHeight) {
+        // Minecraft 經典橡樹 (Oak Tree) 結構
+        // 樹幹
+        for (let dy = 0; dy < trunkHeight; dy++) {
+            this.setBlockRaw(wx, baseY + dy, wz, WOOD);
+        }
+
+        // 樹葉層 (從頂部往下 4 層)
+        const topY = baseY + trunkHeight - 1;
+        const lea = this.treePerlin;
+
+        for (let dy = -3; dy <= 0; dy++) {
+            const cy = topY + dy + 1;
+            const radius = (dy === 0 || dy === -1) ? 1 : 2; // 頂部2層半徑1(3x3)，底部2層半徑2(5x5)
+
+            for (let dx = -radius; dx <= radius; dx++) {
+                for (let dz = -radius; dz <= radius; dz++) {
+                    // 去除角落
+                    if (Math.abs(dx) === radius && Math.abs(dz) === radius) {
+                        // 頂部兩層必定去除四角成十字，底部兩層隨機去除四角
+                        if (radius === 1 || lea.noise2D(wx + dx, wz + dz) > 0) continue;
+                    }
+
+                    // 避免覆蓋樹幹
+                    if (dx === 0 && dz === 0 && dy < 0) continue;
+
+                    const bx = wx + dx;
+                    const bz = wz + dz;
+                    if (this.getBlock(bx, cy, bz) === AIR) {
+                        this.setBlockRaw(bx, cy, bz, LEAVES);
                     }
                 }
             }

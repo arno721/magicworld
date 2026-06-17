@@ -659,9 +659,11 @@ scene.add(hemi);
 const ambient = new THREE.AmbientLight(0x445566, 0.3);
 scene.add(ambient);
 
-const sunLightPos = new THREE.Vector3(80, 120, 60);
+// 日夜循環時間
+let dayTime = Math.PI / 4; // 初始時間 (早上)
+
+const sunLightPos = new THREE.Vector3();
 const sun = new THREE.DirectionalLight(0xfff0d0, 2.5);
-sun.position.copy(sunLightPos);
 sun.castShadow = true;
 sun.shadow.mapSize.width = 2048;
 sun.shadow.mapSize.height = 2048;
@@ -676,18 +678,15 @@ scene.add(sun);
 
 // 太陽視覺
 const sunSphere = new THREE.Mesh(
-    new THREE.SphereGeometry(5, 12, 12),
-    new THREE.MeshBasicMaterial({ color: 0xffdd44 })
+    new THREE.SphereGeometry(8, 16, 16),
+    new THREE.MeshBasicMaterial({ color: 0xffffee })
 );
-sunSphere.position.copy(sunLightPos);
 scene.add(sunSphere);
 const sunGlow = new THREE.Mesh(
-    new THREE.SphereGeometry(10, 12, 12),
-    new THREE.MeshBasicMaterial({ color: 0xffdd44, transparent: true, opacity: 0.12 })
+    new THREE.SphereGeometry(15, 16, 16),
+    new THREE.MeshBasicMaterial({ color: 0xffdd44, transparent: true, opacity: 0.2 })
 );
-sunGlow.position.copy(sunLightPos);
 scene.add(sunGlow);
-skyUniforms.sunDir.value.copy(sunLightPos).normalize();
 
 // 補光（從背面）
 const fill = new THREE.DirectionalLight(0x8899cc, 0.6);
@@ -785,8 +784,44 @@ async function start() {
                 world.updateChunkLoading(player.position.x, player.position.z);
             }
 
-            // 雲朵動畫
+            // 雲朵與日夜循環動畫
             skyUniforms.time.value += delta * 0.3;
+            dayTime += delta * 0.02; // 日夜更替速度
+
+            const orbitRadius = 150;
+            sunLightPos.set(
+                Math.cos(dayTime) * orbitRadius,
+                Math.sin(dayTime) * orbitRadius,
+                50
+            );
+            
+            // 將太陽光跟隨玩家（保持相對位置）
+            sun.position.copy(player.position).add(sunLightPos);
+            sun.target.position.copy(player.position);
+            sun.target.updateMatrixWorld();
+            
+            sunSphere.position.copy(player.position).add(sunLightPos);
+            sunGlow.position.copy(sunSphere.position);
+            
+            skyUniforms.sunDir.value.copy(sunLightPos).normalize();
+            
+            // 根據太陽高度調整光線強度與顏色
+            const sunHeight = Math.sin(dayTime);
+            if (sunHeight > 0) {
+                // 白天
+                sun.intensity = THREE.MathUtils.lerp(0, 2.5, Math.min(sunHeight * 3, 1));
+                hemi.intensity = THREE.MathUtils.lerp(0.1, 0.6, sunHeight);
+                ambient.intensity = THREE.MathUtils.lerp(0.05, 0.3, sunHeight);
+                skyUniforms.topColor.value.lerpColors(new THREE.Color(0x001133), new THREE.Color(0x0066cc), sunHeight);
+                skyUniforms.horizonColor.value.lerpColors(new THREE.Color(0x000000), new THREE.Color(0x87CEEB), sunHeight);
+            } else {
+                // 晚上
+                sun.intensity = 0;
+                hemi.intensity = 0.1;
+                ambient.intensity = 0.05;
+                skyUniforms.topColor.value.setHex(0x000511);
+                skyUniforms.horizonColor.value.setHex(0x001122);
+            }
 
             updateHUD();
             world.updateDirtyChunks();
