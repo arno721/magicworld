@@ -112,7 +112,12 @@ export class Player {
         }
         // 食物恢復生命
         if (this.food > 18 && this.health < this.maxHealth && this.health > 0) {
-            this.heal(0.5);
+            if (!this.healTimer) this.healTimer = 0;
+            this.healTimer += dt;
+            if (this.healTimer > 2.0) { // 每2秒恢復1血（半心）
+                this.heal(1);
+                this.healTimer = 0;
+            }
         }
 
         const forward = new THREE.Vector3();
@@ -154,8 +159,8 @@ export class Player {
             if (this.velocity.y < 0) {
                 // 掉落傷害
                 const fallDist = this.fallStartY - newPos.y;
-                if (fallDist > 4 && !this.wasOnGround) {
-                    this.damage(Math.floor((fallDist - 3) * 2));
+                if (fallDist > 3.5 && !this.wasOnGround) {
+                    this.damage(Math.floor((fallDist - 3)));
                 }
                 newPos.y = Math.floor(this.position.y);
                 aabb = this.getAABB(new THREE.Vector3(newPos.x, newPos.y, newPos.z));

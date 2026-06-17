@@ -51,20 +51,23 @@ export class Chunk {
 
         const addFace = (fx, fy, fz, nx, ny, nz, uv) => {
             const { u, v, u2, v2 } = uv;
-            // Order: bottom-left, bottom-right, top-right, top-left
-            let v1, v2c, v3, v4;
-            if (ny !== 0) {
-                const y = fy + (ny > 0 ? 1 : 0);
-                v1 = [fx, y, fz]; v2c = [fx + 1, y, fz]; v3 = [fx + 1, y, fz + 1]; v4 = [fx, y, fz + 1];
-            } else if (nz !== 0) {
-                const z = fz + (nz > 0 ? 1 : 0);
-                v1 = [fx, fy, z]; v2c = [fx + 1, fy, z]; v3 = [fx + 1, fy + 1, z]; v4 = [fx, fy + 1, z];
-            } else {
-                const x = fx + (nx > 0 ? 1 : 0);
-                v1 = [x, fy, fz]; v2c = [x, fy, fz + 1]; v3 = [x, fy + 1, fz + 1]; v4 = [x, fy + 1, fz];
+            
+            let p1, p2, p3, p4;
+            if (ny > 0) {
+                p1 = [fx, fy+1, fz+1]; p2 = [fx+1, fy+1, fz+1]; p3 = [fx+1, fy+1, fz]; p4 = [fx, fy+1, fz];
+            } else if (ny < 0) {
+                p1 = [fx, fy, fz]; p2 = [fx+1, fy, fz]; p3 = [fx+1, fy, fz+1]; p4 = [fx, fy, fz+1];
+            } else if (nx > 0) {
+                p1 = [fx+1, fy, fz+1]; p2 = [fx+1, fy, fz]; p3 = [fx+1, fy+1, fz]; p4 = [fx+1, fy+1, fz+1];
+            } else if (nx < 0) {
+                p1 = [fx, fy, fz]; p2 = [fx, fy, fz+1]; p3 = [fx, fy+1, fz+1]; p4 = [fx, fy+1, fz];
+            } else if (nz > 0) {
+                p1 = [fx, fy, fz+1]; p2 = [fx+1, fy, fz+1]; p3 = [fx+1, fy+1, fz+1]; p4 = [fx, fy+1, fz+1];
+            } else if (nz < 0) {
+                p1 = [fx+1, fy, fz]; p2 = [fx, fy, fz]; p3 = [fx, fy+1, fz]; p4 = [fx+1, fy+1, fz];
             }
 
-            const verts = [v1, v2c, v3, v1, v3, v4];
+            const verts = [p1, p2, p3, p1, p3, p4];
             const uvVerts = [
                 [u, v], [u2, v], [u2, v2],
                 [u, v], [u2, v2], [u, v2],
@@ -124,7 +127,7 @@ export class Chunk {
 
         const material = new THREE.MeshLambertMaterial({
             map: this.world.textureAtlas,
-            side: THREE.DoubleSide,
+            side: THREE.FrontSide,
             transparent: true,
             alphaTest: 0.1
         });

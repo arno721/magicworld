@@ -121,23 +121,20 @@ function createSky() {
                 vec3 skyCol = mix(horizonColor, topColor, skyMix);
 
                 // 雲層
-                vec2 uv = dir.xz / (abs(dir.y) + 0.15) * 0.025;
-                uv += time * 0.003;
+                vec2 uv = dir.xz / (abs(dir.y) + 0.05) * 0.04;
+                uv += time * 0.002;
                 float c = fbm(uv);
-                float cm = smoothstep(0.35, 0.7, c);
-                float hMask = 1.0 - smoothstep(0.05, 0.5, abs(h));
+                float cm = smoothstep(0.45, 0.65, c);
+                float hMask = smoothstep(0.1, 0.3, h); // 雲在天上，地平線逐漸消失
                 cm *= hMask;
-                vec3 cloudCol = mix(cloudColor2, cloudColor1, cm);
-                skyCol = mix(skyCol, cloudCol, cm * 0.85);
+                vec3 cloudCol = mix(cloudColor2, cloudColor1, smoothstep(0.45, 0.7, c));
+                skyCol = mix(skyCol, cloudCol, cm * 0.9);
 
                 // 太陽
                 float sa = max(dot(dir, sunDir), 0.0);
-                float disk = smoothstep(0.9998, 1.0, sa);
-                float glow = pow(sa, 24.0) * 0.5;
-                float halo = pow(sa, 6.0) * 0.15;
-                skyCol += sunColor * disk * 3.0;
-                skyCol += sunColor * glow;
-                skyCol += sunColor * halo;
+                float disk = smoothstep(0.9995, 1.0, sa);
+                float glow = smoothstep(0.98, 1.0, sa) * 0.6;
+                skyCol = mix(skyCol, sunColor, clamp(disk + glow, 0.0, 1.0));
 
                 gl_FragColor = vec4(skyCol, 1.0);
             }
@@ -504,10 +501,12 @@ window.addEventListener('mousedown', (e) => {
 window.addEventListener('contextmenu', (e) => { if (isLocked) e.preventDefault(); });
 document.addEventListener('pointerlockchange', () => {
     isLocked = document.pointerLockElement === document.body;
-    hintEl.style.opacity = isLocked ? '0' : '1';
+    if (!isLocked && !inventoryOpen && !craftingOpen && !escOpen) {
+        toggleEsc(); // 當玩家按 ESC 退出游標鎖定時，打開選單
+    }
 });
-document.body.addEventListener('click', () => {
-    if (!isLocked && !inventoryOpen && !escOpen) document.body.requestPointerLock();
+document.getElementById('canvas-container').addEventListener('click', () => {
+    if (!isLocked && !inventoryOpen && !craftingOpen && !escOpen) document.body.requestPointerLock();
 });
 window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
@@ -761,7 +760,11 @@ async function start() {
 
         await new Promise(r => setTimeout(r, 400));
         loadingEl.classList.add('hidden');
-        setTimeout(() => { loadingEl.style.display = 'none'; }, 600);
+        setTimeout(() => { 
+            loadingEl.style.display = 'none'; 
+            // 啟動完成後顯示 ESC 選單，等待玩家開始
+            toggleEsc();
+        }, 600);
 
         const clock = new THREE.Clock();
         let frameCount = 0;

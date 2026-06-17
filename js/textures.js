@@ -191,15 +191,16 @@ export async function createTextureAtlasAsync(onProgress) {
         const x = (idx % ATLAS_COLS) * TEX_SIZE;
         const y = Math.floor(idx / ATLAS_COLS) * TEX_SIZE;
         ctx.save(); ctx.translate(x, y);
-        drawTexture(ctx, 64, 64, gen.fn);
+        drawTexture(ctx, 128, 128, gen.fn);
         ctx.restore();
         if (onProgress) onProgress(idx / generators.length, `生成紋理 ${gen.name}...`);
         await new Promise(r => setTimeout(r, 0));
     }
 
     const texture = new THREE.CanvasTexture(canvas);
-    texture.magFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.NearestFilter; // 使用 NearestFilter 保留像素感
     texture.minFilter = THREE.LinearMipmapLinearFilter;
+    texture.anisotropy = 4; // 提升傾斜視角清晰度
     texture.generateMipmaps = true;
 
     const tileW = TEX_SIZE / atlasW, tileH = TEX_SIZE / atlasH;
