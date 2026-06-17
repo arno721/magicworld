@@ -100,7 +100,7 @@ export class Player {
         if (isSprinting) {
             this.foodTimer += dt * 0.5;
         }
-        if (this.foodTimer > 10) {
+        if (this.foodTimer > 15) { // 延長飢餓扣除時間
             this.foodTimer = 0;
             if (this.food > 0) {
                 this.food = Math.max(0, this.food - 1);
@@ -108,7 +108,14 @@ export class Player {
         }
         // 飢餓傷害
         if (this.food <= 0) {
-            this.damage(1);
+            if (!this.starveTimer) this.starveTimer = 0;
+            this.starveTimer += dt;
+            if (this.starveTimer > 2.0) { // 每 2 秒扣 1 血
+                this.damage(1);
+                this.starveTimer = 0;
+            }
+        } else {
+            this.starveTimer = 0;
         }
         // 食物恢復生命
         if (this.food > 18 && this.health < this.maxHealth && this.health > 0) {
@@ -211,9 +218,9 @@ export class Player {
         newPos.y = Math.max(0, Math.min(WORLD_HEIGHT + 10, newPos.y));
 
         if (newPos.y < -10) {
-            this.damage(20);
+            this.damage(2); // 減少虛空掉落的瞬殺機率
             if (this.alive) {
-                newPos.set(0, 80, 0);
+                newPos.set(0, 100, 0); // 重生在高一點的地方
                 this.velocity.set(0, 0, 0);
                 this.onGround = false;
             }

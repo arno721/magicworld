@@ -45,7 +45,7 @@ export class World {
         const cx = Math.floor(wx / CHUNK_SIZE);
         const cz = Math.floor(wz / CHUNK_SIZE);
         const chunk = this.getChunk(cx, cz);
-        if (!chunk) return AIR;
+        if (!chunk || chunk.stage < 1) return 255; // 255 means UNLOADED (Solid to player)
         const lx = ((wx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
         const lz = ((wz % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
         return chunk.getBlock(lx, wy, lz);
