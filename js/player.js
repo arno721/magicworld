@@ -1,11 +1,11 @@
 import * as THREE from 'three';
-import { GRAVITY, JUMP_VELOCITY, MOVE_SPEED, PLAYER_WIDTH, PLAYER_HEIGHT, PLAYER_EYE_HEIGHT, PLAYER_HALF_W, AIR, LEAVES, WORLD_SIZE_X, WORLD_SIZE_Z, WORLD_HEIGHT } from './constants.js';
+import { GRAVITY, JUMP_VELOCITY, MOVE_SPEED, PLAYER_WIDTH, PLAYER_HEIGHT, PLAYER_EYE_HEIGHT, PLAYER_HALF_W, AIR, LEAVES, WORLD_HEIGHT } from './constants.js';
 
 export class Player {
     constructor(camera, world) {
         this.camera = camera;
         this.world = world;
-        this.position = new THREE.Vector3(WORLD_SIZE_X / 2, 40, WORLD_SIZE_Z / 2);
+        this.position = new THREE.Vector3(0, 80, 0);
         this.velocity = new THREE.Vector3(0, 0, 0);
         this.onGround = false;
         this.wasOnGround = false;
@@ -20,7 +20,7 @@ export class Player {
         this.alive = true;
         this.foodTimer = 0;
         this.damageTimer = 0;
-        this.respawnPos = new THREE.Vector3(WORLD_SIZE_X / 2, 40, WORLD_SIZE_Z / 2);
+        this.respawnPos = new THREE.Vector3(0, 80, 0);
     }
 
     getAABB(pos) {
@@ -208,14 +208,12 @@ export class Player {
         this.wasOnGround = this.onGround;
         this.onGround = this.checkCollision(groundCheck);
 
-        newPos.x = Math.max(PLAYER_HALF_W + 0.1, Math.min(WORLD_SIZE_X - PLAYER_HALF_W - 0.1, newPos.x));
-        newPos.z = Math.max(PLAYER_HALF_W + 0.1, Math.min(WORLD_SIZE_Z - PLAYER_HALF_W - 0.1, newPos.z));
         newPos.y = Math.max(0, Math.min(WORLD_HEIGHT + 10, newPos.y));
 
         if (newPos.y < -10) {
             this.damage(20);
             if (this.alive) {
-                newPos.set(WORLD_SIZE_X / 2, 40, WORLD_SIZE_Z / 2);
+                newPos.set(0, 80, 0);
                 this.velocity.set(0, 0, 0);
                 this.onGround = false;
             }

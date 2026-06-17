@@ -4,7 +4,7 @@ import { World } from './world.js';
 import { Player } from './player.js';
 import { Inventory } from './inventory.js';
 import { MagicSystem } from './magic.js';
-import { HOTBAR_BLOCKS, HOTBAR_SIZE, BLOCK_NAMES, AIR, REACH_DISTANCE, WORLD_SIZE_X, WORLD_SIZE_Z, STONE, DIRT, GRASS, COBBLESTONE, WOOD, PLANKS, SAND, GRAVEL, BRICK, STONE_BRICK, GLASS, CRAFTING_TABLE, STICK, COAL } from './constants.js';
+import { HOTBAR_BLOCKS, HOTBAR_SIZE, BLOCK_NAMES, AIR, REACH_DISTANCE, STONE, DIRT, GRASS, COBBLESTONE, WOOD, PLANKS, SAND, GRAVEL, BRICK, STONE_BRICK, GLASS, CRAFTING_TABLE, STICK, COAL } from './constants.js';
 import { findRecipe, getRecipeOutput } from './crafting.js';
 
 const container = document.getElementById('canvas-container');
@@ -727,11 +727,11 @@ async function start() {
             loadText.textContent = txt;
         });
 
-        loadText.textContent = '生成世界...';
+        loadText.textContent = '生成地形...';
         await new Promise(r => setTimeout(r, 50));
         await new Promise(r => requestAnimationFrame(r));
 
-        await world.generateAll((progress, text) => {
+        await world.initSpawn((progress, text) => {
             loadBar.style.width = Math.round(10 + progress * 90) + '%';
             loadText.textContent = text + ` (${Math.round(progress * 100)}%)`;
         });
@@ -748,8 +748,8 @@ async function start() {
 
         buildHotbar(world.createBlockPreview);
 
-        const sx = Math.floor(WORLD_SIZE_X / 2);
-        const sz = Math.floor(WORLD_SIZE_Z / 2);
+        const sx = 8;
+        const sz = 8;
         let sy = world.findSurfaceY(sx, sz) + 2;
         sy = Math.max(sy, 20);
         player.respawnPos.set(sx, sy, sz);
@@ -802,6 +802,8 @@ async function start() {
             
             sunSphere.position.copy(player.position).add(sunLightPos);
             sunGlow.position.copy(sunSphere.position);
+            
+            sky.position.copy(player.position); // 天空盒跟隨玩家
             
             skyUniforms.sunDir.value.copy(sunLightPos).normalize();
             
