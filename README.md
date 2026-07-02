@@ -53,6 +53,9 @@
 ```bash
 # 使用 VS Code Live Server 或 npx
 npx serve .
+
+# 或直接啟動本地 server（修復版）:
+python serve_local.py
 ```
 
 > 因 ES Modules 使用 **CORS** 限制，無法直接雙擊開啟檔案，需要使用 HTTP 伺服器。

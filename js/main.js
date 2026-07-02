@@ -4,14 +4,23 @@ import { World } from './world.js';
 import { Player } from './player.js';
 import { Inventory } from './inventory.js';
 import { MagicSystem } from './magic.js';
-import { HOTBAR_BLOCKS, HOTBAR_SIZE, BLOCK_NAMES, AIR, REACH_DISTANCE, STONE, DIRT, GRASS, COBBLESTONE, WOOD, PLANKS, SAND, GRAVEL, BRICK, STONE_BRICK, GLASS, CRAFTING_TABLE, STICK, COAL } from './constants.js';
+import {
+    HOTBAR_SIZE,
+    BLOCK_NAMES,
+    AIR,
+    REACH_DISTANCE,
+    CRAFTING_TABLE,
+    BLOCK_HARDNESS,
+    PICKUP_RADIUS,
+    DROPPED_ITEM_LIFETIME,
+    DROPPED_ITEM_GRAVITY,
+} from './constants.js';
 import { findRecipe, getRecipeOutput } from './crafting.js';
 
 const container = document.getElementById('canvas-container');
 const loadingEl = document.getElementById('loading');
 const loadBar = document.getElementById('load-bar');
 const loadText = document.getElementById('load-text');
-const hintEl = document.getElementById('hint');
 const hotbarEl = document.getElementById('hotbar');
 const blockIndicator = document.getElementById('block-indicator');
 
@@ -19,9 +28,19 @@ let selectedSlot = 0;
 let isLocked = false;
 let inventoryOpen = false;
 let escOpen = false;
+let craftingOpen = false;
 let targetBlockPos = null;
+let pendingMoveSlot = null;
 
-// ====== 音效系統 ======
+let isDestroying = false;
+let destroyTargetKey = '';
+let destroyBlockType = AIR;
+let destroyProgress = 0;
+
+const droppedItems = [];
+const droppedItemGeometry = new THREE.BoxGeometry(0.3, 0.3, 0.3);
+const droppedItemMaterialCache = new Map();
+
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
 function playTone(freq, duration, type = 'square', volume = 0.15) {
@@ -36,7 +55,9 @@ function playTone(freq, duration, type = 'square', volume = 0.15) {
         gain.connect(audioCtx.destination);
         osc.start();
         osc.stop(audioCtx.currentTime + duration);
-    } catch (e) { /* 忽略音效錯誤 */ }
+    } catch {
+        // ignore audio errors on unsupported contexts
+    }
 }
 
 function playDestroySound() {
@@ -53,16 +74,14 @@ function playHitSound() {
     playTone(120, 0.04, 'sawtooth', 0.06);
 }
 
-// ====== Block selection overlay ======
 const overlayGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.001, 1.001, 1.001));
 const overlayMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 });
 const overlayMesh = new THREE.LineSegments(overlayGeo, overlayMat);
 overlayMesh.visible = false;
 
-// ====== 天空盒（雲朵+太陽） ======
 const skyUniforms = {
     topColor: { value: new THREE.Color(0x0066cc) },
-    horizonColor: { value: new THREE.Color(0x87CEEB) },
+    horizonColor: { value: new THREE.Color(0x87ceeb) },
     bottomColor: { value: new THREE.Color(0xccddee) },
     cloudColor1: { value: new THREE.Color(0xffffff) },
     cloudColor2: { value: new THREE.Color(0xc8d0d8) },
@@ -110,7 +129,11 @@ function createSky() {
             }
             float fbm(vec2 p) {
                 float v = 0.0, a = 0.5;
-                for (int i = 0; i < 4; i++) { v += a * noise(p); p *= 2.0; a *= 0.5; }
+                for (int i = 0; i < 4; i++) {
+                    v += a * noise(p);
+                    p *= 2.0;
+                    a *= 0.5;
+                }
                 return v;
             }
 
@@ -120,17 +143,15 @@ function createSky() {
                 float skyMix = smoothstep(-0.05, 0.5, h);
                 vec3 skyCol = mix(horizonColor, topColor, skyMix);
 
-                // 雲層
                 vec2 uv = dir.xz / (abs(dir.y) + 0.05) * 0.04;
                 uv += time * 0.002;
                 float c = fbm(uv);
                 float cm = smoothstep(0.45, 0.65, c);
-                float hMask = smoothstep(0.1, 0.3, h); // 雲在天上，地平線逐漸消失
+                float hMask = smoothstep(0.1, 0.3, h);
                 cm *= hMask;
                 vec3 cloudCol = mix(cloudColor2, cloudColor1, smoothstep(0.45, 0.7, c));
                 skyCol = mix(skyCol, cloudCol, cm * 0.9);
 
-                // 太陽
                 float sa = max(dot(dir, sunDir), 0.0);
                 float disk = smoothstep(0.9995, 1.0, sa);
                 float glow = smoothstep(0.98, 1.0, sa) * 0.6;
@@ -149,37 +170,122 @@ function selectSlot(index) {
     document.querySelectorAll('.slot').forEach((s, i) => s.classList.toggle('selected', i === index));
 }
 
-function showBlockIndicator(msg) {
+function showBlockIndicator(msg, ttl = 1200) {
     blockIndicator.textContent = msg;
     blockIndicator.style.opacity = '1';
     clearTimeout(blockIndicator._timeout);
-    blockIndicator._timeout = setTimeout(() => { blockIndicator.style.opacity = '0'; }, 1200);
+    if (ttl > 0) {
+        blockIndicator._timeout = setTimeout(() => {
+            blockIndicator.style.opacity = '0';
+        }, ttl);
+    }
+}
+
+function showDestroyIndicator(msg) {
+    clearTimeout(blockIndicator._timeout);
+    blockIndicator.textContent = msg;
+    blockIndicator.style.opacity = '1';
+}
+
+function hideBlockIndicator() {
+    clearTimeout(blockIndicator._timeout);
+    blockIndicator.style.opacity = '0';
+}
+
+function setMoveSource(slotIndex) {
+    pendingMoveSlot = slotIndex;
+    const slot = inventory.getSlot(slotIndex);
+    const label = slot && slot.count > 0 ? `${BLOCK_NAMES[slot.blockType] || '未知'}x${slot.count}` : '空槽';
+    showBlockIndicator(`已選擇欄位 ${slotIndex + 1} (${label})，再點一次其他欄位移動`);
+    buildHotbar(world?.createBlockPreview);
+    buildInventoryScreen(world?.createBlockPreview);
+}
+
+function clearMoveSource() {
+    pendingMoveSlot = null;
+    buildHotbar(world?.createBlockPreview);
+    buildInventoryScreen(world?.createBlockPreview);
+}
+
+function onInventorySlotClick(slotIndex, isHotbar = false) {
+    const fromSlot = inventory.getSlot(slotIndex);
+    if (!fromSlot) return;
+
+    if (pendingMoveSlot === null) {
+        if (isHotbar) selectSlot(slotIndex);
+        setMoveSource(slotIndex);
+        return;
+    }
+
+    if (pendingMoveSlot === slotIndex) {
+        clearMoveSource();
+        return;
+    }
+
+    const moved = inventory.moveStack(pendingMoveSlot, slotIndex);
+    if (!moved) {
+        showBlockIndicator('此欄位無法接收該堆疊');
+    } else {
+        buildHotbar(world.createBlockPreview);
+        buildInventoryScreen(world.createBlockPreview);
+        if (isHotbar) selectSlot(slotIndex);
+        showBlockIndicator('已移動 / 交換欄位');
+    }
+    clearMoveSource();
+}
+
+function setDestroyTarget(target) {
+    if (!target) {
+        isDestroying = false;
+        destroyTargetKey = '';
+        destroyProgress = 0;
+        destroyBlockType = AIR;
+        hideBlockIndicator();
+        return;
+    }
+    destroyBlockType = target;
+}
+
+function stopDestroying() {
+    isDestroying = false;
+    destroyProgress = 0;
+    destroyTargetKey = '';
+    destroyBlockType = AIR;
+    hideBlockIndicator();
+}
+
+function getTargetKey(vec) {
+    return `${vec.x},${vec.y},${vec.z}`;
 }
 
 function buildHotbar(previewFn) {
     hotbarEl.innerHTML = '';
     const hotbarSlots = inventory.getHotbarSlots();
+
     for (let i = 0; i < HOTBAR_SIZE; i++) {
-        const blockType = HOTBAR_BLOCKS[i];
-        const slotData = hotbarSlots[i];
+        const slotData = hotbarSlots[i] || { blockType: AIR, count: 0 };
         const slot = document.createElement('div');
-        slot.className = 'slot' + (i === selectedSlot ? ' selected' : '');
+        slot.className = 'slot';
         slot.dataset.index = i;
-        const preview = document.createElement('div');
-        preview.className = 'block-preview';
-        if (previewFn) {
-            const canvas = previewFn(blockType, 40);
-            canvas.style.width = '100%';
-            canvas.style.height = '100%';
-            preview.appendChild(canvas);
+        if (i === selectedSlot) slot.classList.add('selected');
+        if (pendingMoveSlot === i) slot.classList.add('move-source');
+
+        if (slotData.blockType !== AIR && slotData.count > 0 && previewFn) {
+            const preview = previewFn(slotData.blockType, 40);
+            if (preview) {
+                preview.className = 'block-preview';
+                preview.style.width = '100%';
+                preview.style.height = '100%';
+                slot.appendChild(preview);
+            }
         }
-        preview.title = BLOCK_NAMES[blockType] || '方块';
-        slot.appendChild(preview);
+
         const count = document.createElement('span');
         count.className = 'slot-number';
         count.textContent = slotData.count > 0 ? slotData.count : '';
         slot.appendChild(count);
-        slot.addEventListener('click', () => selectSlot(i));
+
+        slot.addEventListener('click', () => onInventorySlotClick(i, true));
         hotbarEl.appendChild(slot);
     }
 }
@@ -189,23 +295,31 @@ let invCraftGrid = Array(2).fill(null).map(() => Array(2).fill(AIR));
 function buildInventoryScreen(previewFn) {
     const grid = document.getElementById('inv-grid');
     grid.innerHTML = '';
+
     for (let i = 0; i < inventory.size; i++) {
         const slot = inventory.slots[i];
         const div = document.createElement('div');
         div.className = 'inv-slot';
+        if (pendingMoveSlot === i) div.classList.add('move-source');
+
         if (slot.count > 0 && previewFn) {
             const canvas = previewFn(slot.blockType, 28);
-            canvas.style.width = '28px'; canvas.style.height = '28px';
-            div.appendChild(canvas);
+            if (canvas) {
+                canvas.className = 'block-preview';
+                canvas.style.width = '28px';
+                canvas.style.height = '28px';
+                div.appendChild(canvas);
+            }
             const cnt = document.createElement('span');
             cnt.className = 'count';
             cnt.textContent = slot.count;
             div.appendChild(cnt);
         }
+
+        div.addEventListener('click', () => onInventorySlotClick(i, false));
         grid.appendChild(div);
     }
 
-    // 內建 2x2 合成格
     const craftGrid = document.getElementById('inv-craft-grid');
     craftGrid.innerHTML = '';
     for (let y = 0; y < 2; y++) {
@@ -215,8 +329,11 @@ function buildInventoryScreen(previewFn) {
             const block = invCraftGrid[y][x];
             if (block !== AIR && previewFn) {
                 const canvas = previewFn(block, 24);
-                canvas.style.width = '24px'; canvas.style.height = '24px';
-                div.appendChild(canvas);
+                if (canvas) {
+                    canvas.style.width = '24px';
+                    canvas.style.height = '24px';
+                    div.appendChild(canvas);
+                }
             }
             div.addEventListener('click', () => {
                 if (invCraftGrid[y][x] !== AIR) {
@@ -236,7 +353,6 @@ function buildInventoryScreen(previewFn) {
         }
     }
 
-    // 結果
     const resultEl = document.getElementById('inv-craft-result');
     const recipe = findRecipe(invCraftGrid, 2, 2);
     resultEl.innerHTML = '';
@@ -244,8 +360,11 @@ function buildInventoryScreen(previewFn) {
         const output = getRecipeOutput(recipe, invCraftGrid, 2, 2);
         if (output && previewFn) {
             const canvas = previewFn(output.blockType, 28);
-            canvas.style.width = '28px'; canvas.style.height = '28px';
-            resultEl.appendChild(canvas);
+            if (canvas) {
+                canvas.style.width = '28px';
+                canvas.style.height = '28px';
+                resultEl.appendChild(canvas);
+            }
             const cnt = document.createElement('span');
             cnt.className = 'count';
             cnt.textContent = 'x' + output.count;
@@ -253,7 +372,9 @@ function buildInventoryScreen(previewFn) {
         }
         resultEl.onclick = () => {
             invCraftGrid = Array(2).fill(null).map(() => Array(2).fill(AIR));
-            for (let i = 0; i < output.count; i++) inventory.addBlock(output.blockType, 1);
+            for (let i = 0; i < output.count; i++) {
+                inventory.addBlock(output.blockType, 1);
+            }
             buildInventoryScreen(previewFn);
             buildHotbar(previewFn);
         };
@@ -263,7 +384,9 @@ function buildInventoryScreen(previewFn) {
 }
 
 function toggleInventory() {
+    if (isDestroying) stopDestroying();
     inventoryOpen = !inventoryOpen;
+    clearMoveSource();
     document.getElementById('inventory-screen').style.display = inventoryOpen ? 'flex' : 'none';
     if (inventoryOpen) {
         buildInventoryScreen(world.createBlockPreview);
@@ -284,12 +407,12 @@ function toggleEsc() {
     }
 }
 
-// ====== 合成系統 ======
-let craftingOpen = false;
 let craftingGrid = Array(3).fill(null).map(() => Array(3).fill(AIR));
-let craftingWidth = 2, craftingHeight = 2; // 預設 2x2（背包合成）
+let craftingWidth = 2;
+let craftingHeight = 2;
 
 function openCrafting(isTable) {
+    if (isDestroying) stopDestroying();
     craftingOpen = true;
     craftingWidth = isTable ? 3 : 2;
     craftingHeight = isTable ? 3 : 2;
@@ -300,7 +423,6 @@ function openCrafting(isTable) {
 }
 
 function closeCrafting() {
-    // 歸還材料
     for (let y = 0; y < craftingHeight; y++) {
         for (let x = 0; x < craftingWidth; x++) {
             const block = craftingGrid[y][x];
@@ -313,7 +435,6 @@ function closeCrafting() {
 }
 
 function placeInCraftingSlot(slotY, slotX) {
-    // 從玩家物品欄取一個方塊放入合成格
     const blockType = inventory.getSelectedBlock();
     if (blockType === AIR || !inventory.hasBlock(blockType, 1)) return;
     if (craftingGrid[slotY][slotX] !== AIR) return;
@@ -336,7 +457,6 @@ function craftItem() {
     const output = getRecipeOutput(recipe, craftingGrid, craftingWidth, craftingHeight);
     if (!output) return;
 
-    // 檢查材料是否足夠（透過消耗合成格中的物品）
     const ing = recipe.ingredients;
     const pat = recipe.pattern;
     for (let y = 0; y < pat.length; y++) {
@@ -349,7 +469,6 @@ function craftItem() {
         }
     }
 
-    // 消耗材料
     for (let y = 0; y < pat.length; y++) {
         for (let x = 0; x < pat[0].length; x++) {
             if (pat[y][x] !== ' ') {
@@ -358,14 +477,13 @@ function craftItem() {
         }
     }
 
-    // 產出物品
     for (let i = 0; i < output.count; i++) {
         inventory.addBlock(output.blockType, 1);
     }
 
     updateCraftingUI();
     buildHotbar(world.createBlockPreview);
-    showBlockIndicator(`🪚 合成 ${BLOCK_NAMES[output.blockType] || '物品'} x${output.count}`);
+    showBlockIndicator(`合成 ${BLOCK_NAMES[output.blockType] || '物品'} x${output.count}`);
 }
 
 function updateCraftingUI() {
@@ -377,28 +495,30 @@ function updateCraftingUI() {
         for (let x = 0; x < craftingWidth; x++) {
             const div = document.createElement('div');
             div.className = 'craft-slot';
-            div.dataset.y = y;
-            div.dataset.x = x;
             const block = craftingGrid[y][x];
             if (block !== AIR && world.createBlockPreview) {
                 const canvas = world.createBlockPreview(block, 24);
-                canvas.style.width = '24px'; canvas.style.height = '24px';
-                div.appendChild(canvas);
+                if (canvas) {
+                    canvas.style.width = '24px';
+                    canvas.style.height = '24px';
+                    div.appendChild(canvas);
+                }
             }
             div.addEventListener('click', (e) => {
-                const sy = parseInt(e.currentTarget.dataset.y);
-                const sx = parseInt(e.currentTarget.dataset.x);
+                const sy = parseInt(e.currentTarget.dataset?.y || y, 10);
+                const sx = parseInt(e.currentTarget.dataset?.x || x, 10);
                 if (craftingGrid[sy][sx] !== AIR) {
                     takeFromCraftingSlot(sy, sx);
                 } else {
                     placeInCraftingSlot(sy, sx);
                 }
             });
+            div.dataset.y = y;
+            div.dataset.x = x;
             grid.appendChild(div);
         }
     }
 
-    // 空欄位補齊（2x2 模式下不顯示第3行/列）
     if (craftingWidth === 2) {
         for (let y = 0; y < 2; y++) {
             for (let x = 2; x < 3; x++) {
@@ -415,7 +535,6 @@ function updateCraftingUI() {
         grid.appendChild(row3);
     }
 
-    // 更新結果
     const resultEl = document.getElementById('craft-result');
     const recipe = findRecipe(craftingGrid, craftingWidth, craftingHeight);
     resultEl.innerHTML = '';
@@ -423,8 +542,11 @@ function updateCraftingUI() {
         const output = getRecipeOutput(recipe, craftingGrid, craftingWidth, craftingHeight);
         if (output && world.createBlockPreview) {
             const canvas = world.createBlockPreview(output.blockType, 28);
-            canvas.style.width = '28px'; canvas.style.height = '28px';
-            resultEl.appendChild(canvas);
+            if (canvas) {
+                canvas.style.width = '28px';
+                canvas.style.height = '28px';
+                resultEl.appendChild(canvas);
+            }
             const cnt = document.createElement('span');
             cnt.className = 'count';
             cnt.textContent = 'x' + output.count;
@@ -443,11 +565,13 @@ document.getElementById('craft-close-btn')?.addEventListener('click', () => {
     if (!inventoryOpen && !escOpen) document.body.requestPointerLock();
 });
 
-// ====== 按鍵 ======
 const keys = {};
 window.addEventListener('keydown', (e) => {
     keys[e.code] = true;
-    if (e.code >= 'Digit1' && e.code <= 'Digit9') selectSlot(parseInt(e.code.replace('Digit','')) - 1);
+    if (e.code >= 'Digit1' && e.code <= 'Digit9') {
+        selectSlot(parseInt(e.code.replace('Digit', ''), 10) - 1);
+        clearMoveSource();
+    }
     if (e.code === 'Digit0') selectSlot(8);
     if (e.code === 'Space') e.preventDefault();
     if (e.code === 'KeyM') { magic.toggle(); e.preventDefault(); }
@@ -465,65 +589,16 @@ window.addEventListener('keydown', (e) => {
         else { toggleEsc(); }
     }
 });
-window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+window.addEventListener('keyup', (e) => {
+    keys[e.code] = false;
+});
+
 window.addEventListener('wheel', (e) => {
     if (!isLocked) return;
     if (e.deltaY > 0) selectSlot((selectedSlot + 1) % HOTBAR_SIZE);
     else selectSlot((selectedSlot - 1 + HOTBAR_SIZE) % HOTBAR_SIZE);
-});
-
-// ====== 滑鼠 ======
-window.addEventListener('mousedown', (e) => {
-    if (!isLocked) return;
-    if (e.button === 0) destroyBlock();
-    else if (e.button === 2) {
-        if (magic.active) { magic.cast(); }
-        else {
-            // 檢查是否點到工作台
-            const origin = camera.position.clone();
-            const dir = new THREE.Vector3();
-            camera.getWorldDirection(dir);
-            const result = world.raycastBlock(origin, dir, REACH_DISTANCE);
-            if (result && result.blockPos) {
-                const bp = result.blockPos;
-                const block = world.getBlock(bp.x, bp.y, bp.z);
-                if (block === CRAFTING_TABLE) {
-                    openCrafting(true);
-                    e.preventDefault();
-                    return;
-                }
-            }
-            placeBlock();
-        }
-        e.preventDefault();
-    }
-});
-window.addEventListener('contextmenu', (e) => { if (isLocked) e.preventDefault(); });
-document.addEventListener('pointerlockchange', () => {
-    isLocked = document.pointerLockElement === document.body;
-    if (!isLocked && !inventoryOpen && !craftingOpen && !escOpen) {
-        toggleEsc(); // 當玩家按 ESC 退出游標鎖定時，打開選單
-    }
-});
-document.getElementById('canvas-container').addEventListener('click', () => {
-    if (!isLocked && !inventoryOpen && !craftingOpen && !escOpen) document.body.requestPointerLock();
-});
-window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-});
-
-// ====== ESC 選單按鈕 ======
-document.getElementById('esc-resume')?.addEventListener('click', toggleEsc);
-document.getElementById('esc-save')?.addEventListener('click', () => {
-    showBlockIndicator('💾 世界已儲存（LocalStorage）');
-    toggleEsc();
-});
-document.getElementById('esc-back')?.addEventListener('click', () => {
-    if (confirm('確定回到標題畫面？未儲存的進度將遺失。')) {
-        location.reload();
-    }
+    clearMoveSource();
 });
 
 function getInput() {
@@ -537,29 +612,120 @@ function getInput() {
     };
 }
 
-function updateHUD() {
-    const healthEl = document.getElementById('health-bar');
-    const foodEl = document.getElementById('food-bar');
-    if (!healthEl) return;
-
-    const hearts = Math.ceil(player.health / 2);
-    const maxHearts = player.maxHealth / 2;
-    const foodIcons = Math.ceil(player.food / 2);
-    const maxFood = player.maxFood / 2;
-
-    healthEl.innerHTML = '';
-    for (let i = 0; i < maxHearts; i++) {
-        const span = document.createElement('span');
-        span.className = 'icon' + (i >= hearts ? ' lost' : '');
-        span.textContent = '❤️';
-        healthEl.appendChild(span);
+function getDroppedMaterial(blockType) {
+    if (!world || !world.createBlockPreview) {
+        return new THREE.MeshStandardMaterial({ color: 0x888888 });
     }
-    foodEl.innerHTML = '';
-    for (let i = 0; i < maxFood; i++) {
-        const span = document.createElement('span');
-        span.className = 'icon' + (i >= foodIcons ? ' lost' : '');
-        span.textContent = '🍖';
-        foodEl.appendChild(span);
+    if (droppedItemMaterialCache.has(blockType)) {
+        return droppedItemMaterialCache.get(blockType);
+    }
+
+    const preview = world.createBlockPreview(blockType, 64);
+    if (!preview) {
+        const mat = new THREE.MeshStandardMaterial({ color: 0x888888 });
+        droppedItemMaterialCache.set(blockType, mat);
+        return mat;
+    }
+
+    const texture = new THREE.CanvasTexture(preview);
+    texture.magFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.LinearMipMapLinearFilter;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const mat = new THREE.MeshStandardMaterial({ map: texture, transparent: true, side: THREE.DoubleSide });
+    droppedItemMaterialCache.set(blockType, mat);
+    return mat;
+}
+
+function spawnDroppedItem(blockType, count, position) {
+    if (count <= 0 || blockType === AIR) return;
+    const material = getDroppedMaterial(blockType);
+    const mesh = new THREE.Mesh(droppedItemGeometry, material);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.position.copy(position.clone());
+    mesh.position.y += 0.1;
+    mesh.userData.spinOffset = Math.random() * Math.PI * 2;
+    scene.add(mesh);
+
+    const velocity = new THREE.Vector3(
+        (Math.random() - 0.5) * 2.4,
+        2 + Math.random() * 1.1,
+        (Math.random() - 0.5) * 2.4
+    );
+
+    droppedItems.push({
+        blockType,
+        count,
+        age: 0,
+        position,
+        velocity,
+        mesh,
+    });
+}
+
+function removeDroppedItem(index) {
+    const item = droppedItems[index];
+    if (!item) return;
+    if (item.mesh) {
+        scene.remove(item.mesh);
+    }
+    droppedItems.splice(index, 1);
+}
+
+function tryCollectDroppedItem(item) {
+    const remaining = inventory.addBlock(item.blockType, item.count);
+    const taken = item.count - remaining;
+    if (taken <= 0) return false;
+
+    playHitSound();
+    const label = BLOCK_NAMES[item.blockType] || '物品';
+    showBlockIndicator(`撿起 ${label} x${taken}`);
+    item.count = remaining;
+    buildHotbar(world.createBlockPreview);
+    buildInventoryScreen(world.createBlockPreview);
+    return remaining <= 0;
+}
+
+function updateDroppedItems(delta) {
+    if (droppedItems.length === 0) return;
+
+    for (let i = droppedItems.length - 1; i >= 0; i--) {
+        const item = droppedItems[i];
+        item.age += delta;
+        if (item.age >= DROPPED_ITEM_LIFETIME) {
+            removeDroppedItem(i);
+            continue;
+        }
+
+        item.velocity.y -= DROPPED_ITEM_GRAVITY * delta;
+        item.velocity.x *= 0.98;
+        item.velocity.z *= 0.98;
+        item.position.addScaledVector(item.velocity, delta);
+
+        const floorX = Math.floor(item.position.x);
+        const floorY = Math.floor(item.position.y - 0.08);
+        const floorZ = Math.floor(item.position.z);
+        const below = world.getBlock(floorX, floorY, floorZ);
+
+        if (below !== AIR && below !== 255) {
+            item.position.y = Math.floor(item.position.y) + 0.95;
+            if (item.velocity.y < 0) item.velocity.y = Math.max(0, item.velocity.y * -0.2);
+        }
+
+        if (item.position.y < 0) {
+            item.position.y = 0.1;
+            item.velocity.y = 0;
+        }
+
+        item.mesh.position.copy(item.position);
+        item.mesh.rotation.x += delta * 1.2 + item.mesh.userData.spinOffset * 0.001;
+        item.mesh.rotation.y += delta * 1.1 + item.mesh.userData.spinOffset * 0.001;
+
+        if (player.position.distanceTo(item.position) <= PICKUP_RADIUS) {
+            if (tryCollectDroppedItem(item)) {
+                removeDroppedItem(i);
+            }
+        }
     }
 }
 
@@ -582,59 +748,223 @@ function updateTargetBlock() {
     }
 }
 
-function destroyBlock() {
-    updateTargetBlock();
-    if (!targetBlockPos) return;
-    const bp = targetBlockPos;
-    const block = world.getBlock(bp.x, bp.y, bp.z);
-    if (block !== AIR) {
-        world.setBlock(bp.x, bp.y, bp.z, AIR);
-        world.updateDirtyChunks();
-        inventory.addBlock(block, 1);
-        playDestroySound();
-        showBlockIndicator('破壞: ' + (BLOCK_NAMES[block] || '方塊') + ` (×${inventory.countBlock(block)})`);
-        buildHotbar(world.createBlockPreview);
+function breakBlockAt(blockPos) {
+    if (!blockPos) return;
+    const block = world.getBlock(blockPos.x, blockPos.y, blockPos.z);
+    if (block === AIR) return;
+
+    world.setBlock(blockPos.x, blockPos.y, blockPos.z, AIR);
+    world.updateDirtyChunks();
+    const name = BLOCK_NAMES[block] || '方塊';
+    spawnDroppedItem(block, 1, new THREE.Vector3(blockPos.x + 0.5, blockPos.y + 0.5, blockPos.z + 0.5));
+    playDestroySound();
+    showBlockIndicator(`破壞 ${name}`);
+}
+
+function updateDestroyProgress(delta) {
+    if (!isDestroying) return;
+    if (!targetBlockPos) {
+        setDestroyTarget(null);
+        return;
     }
+
+    const key = getTargetKey(targetBlockPos);
+    const blockType = world.getBlock(targetBlockPos.x, targetBlockPos.y, targetBlockPos.z);
+    if (blockType === AIR || blockType === 255) {
+        setDestroyTarget(null);
+        return;
+    }
+
+    const hardness = BLOCK_HARDNESS[blockType];
+    const isInvalidHardness = !Number.isFinite(hardness) || hardness <= 0;
+
+    if (key !== destroyTargetKey || destroyBlockType !== blockType) {
+        destroyTargetKey = key;
+        destroyBlockType = blockType;
+        destroyProgress = 0;
+    }
+
+    if (isInvalidHardness || !Number.isFinite(hardness)) {
+        showDestroyIndicator(`無法破壞：${BLOCK_NAMES[blockType] || '此方塊'}`);
+        return;
+    }
+    if (!Number.isFinite(hardness) || hardness === Number.POSITIVE_INFINITY) {
+        showDestroyIndicator(`無法破壞：${BLOCK_NAMES[blockType] || '此方塊'}`);
+        return;
+    }
+
+    if (hardness === Number.NEGATIVE_INFINITY) {
+        destroyProgress = 1;
+    } else {
+        destroyProgress += delta / hardness;
+    }
+
+    const percent = Math.min(100, Math.floor(destroyProgress * 100));
+    showDestroyIndicator(`${BLOCK_NAMES[blockType] || '方塊'} ${percent}%`);
+
+    if (destroyProgress >= 1) {
+        breakBlockAt(targetBlockPos);
+        stopDestroying();
+    }
+}
+
+function startDestroy() {
+    if (!targetBlockPos) {
+        updateTargetBlock();
+        if (!targetBlockPos) return;
+    }
+    isDestroying = true;
+    destroyTargetKey = '';
+    destroyBlockType = AIR;
+    destroyProgress = 0;
 }
 
 function placeBlock() {
     updateTargetBlock();
     if (!targetBlockPos) return;
+
     const origin = camera.position.clone();
     const direction = new THREE.Vector3();
     camera.getWorldDirection(direction);
     const result = world.raycastBlock(origin, direction, REACH_DISTANCE);
     if (!result || !result.placePos) return;
 
-    const pp = result.placePos;
-    const blockType = HOTBAR_BLOCKS[selectedSlot];
-    if (!inventory.hasBlock(blockType, 1)) {
-        showBlockIndicator('⛔ 沒有這個方塊');
+    const selected = inventory.getSlot(selectedSlot);
+    const blockType = selected ? selected.blockType : AIR;
+    if (!selected || selected.count <= 0 || selected.blockType === AIR) {
+        showBlockIndicator('目前快捷欄沒有可放置的方塊');
         return;
     }
+
+    const pp = result.placePos;
     const playerAABB = player.getAABB(player.position);
-    const placeAABB = { minX: pp.x, maxX: pp.x+1, minY: pp.y, maxY: pp.y+1, minZ: pp.z, maxZ: pp.z+1 };
-    const overlaps = !(playerAABB.maxX <= placeAABB.minX || playerAABB.minX >= placeAABB.maxX ||
-                       playerAABB.maxY <= placeAABB.minY || playerAABB.minY >= placeAABB.maxY ||
-                       playerAABB.maxZ <= placeAABB.minZ || playerAABB.minZ >= placeAABB.maxZ);
-    if (overlaps) { showBlockIndicator('⛔ 無法在此放置'); return; }
+    const placeAABB = { minX: pp.x, maxX: pp.x + 1, minY: pp.y, maxY: pp.y + 1, minZ: pp.z, maxZ: pp.z + 1 };
+    const overlaps = !(
+        playerAABB.maxX <= placeAABB.minX ||
+        playerAABB.minX >= placeAABB.maxX ||
+        playerAABB.maxY <= placeAABB.minY ||
+        playerAABB.minY >= placeAABB.maxY ||
+        playerAABB.maxZ <= placeAABB.minZ ||
+        playerAABB.minZ >= placeAABB.maxZ
+    );
+    if (overlaps) {
+        showBlockIndicator('放置位置與玩家重疊');
+        return;
+    }
     if (world.getBlock(pp.x, pp.y, pp.z) === AIR) {
         world.setBlock(pp.x, pp.y, pp.z, blockType);
         world.updateDirtyChunks();
         inventory.removeBlock(blockType, 1);
         playPlaceSound();
-        showBlockIndicator('放置: ' + (BLOCK_NAMES[blockType] || '方塊'));
         buildHotbar(world.createBlockPreview);
+        buildInventoryScreen(world.createBlockPreview);
+        showBlockIndicator(`放置 ${BLOCK_NAMES[blockType] || '方塊'}`);
     }
 }
 
+function updateHUD() {
+    const healthEl = document.getElementById('health-bar');
+    const foodEl = document.getElementById('food-bar');
+    if (!healthEl || !foodEl) return;
+
+    const hearts = Math.ceil(player.health / 2);
+    const maxHearts = player.maxHealth / 2;
+    const foodIcons = Math.ceil(player.food / 2);
+    const maxFood = player.maxFood / 2;
+
+    healthEl.innerHTML = '';
+    for (let i = 0; i < maxHearts; i++) {
+        const span = document.createElement('span');
+        span.className = 'icon' + (i >= hearts ? ' lost' : '');
+        span.textContent = '♥';
+        healthEl.appendChild(span);
+    }
+    foodEl.innerHTML = '';
+    for (let i = 0; i < maxFood; i++) {
+        const span = document.createElement('span');
+        span.className = 'icon' + (i >= foodIcons ? ' lost' : '');
+        span.textContent = '🍖';
+        foodEl.appendChild(span);
+    }
+}
+
+window.addEventListener('mousedown', (e) => {
+    if (!isLocked) return;
+    if (e.button === 0) {
+        startDestroy();
+        return;
+    }
+    if (e.button === 2) {
+        if (magic.active) {
+            magic.cast();
+        } else {
+            const origin = camera.position.clone();
+            const dir = new THREE.Vector3();
+            camera.getWorldDirection(dir);
+            const result = world.raycastBlock(origin, dir, REACH_DISTANCE);
+            if (result && result.blockPos) {
+                const bp = result.blockPos;
+                const block = world.getBlock(bp.x, bp.y, bp.z);
+                if (block === CRAFTING_TABLE) {
+                    openCrafting(true);
+                    e.preventDefault();
+                    return;
+                }
+            }
+            placeBlock();
+        }
+        e.preventDefault();
+    }
+});
+
+window.addEventListener('mouseup', (e) => {
+    if (e.button === 0) {
+        stopDestroying();
+    }
+});
+
+window.addEventListener('contextmenu', (e) => {
+    if (isLocked) e.preventDefault();
+});
+
+document.addEventListener('pointerlockchange', () => {
+    isLocked = document.pointerLockElement === document.body;
+    if (!isLocked) {
+        if (!inventoryOpen && !craftingOpen && !escOpen) {
+            toggleEsc();
+        }
+        stopDestroying();
+    }
+});
+
+document.getElementById('canvas-container').addEventListener('click', () => {
+    if (!isLocked && !inventoryOpen && !craftingOpen && !escOpen) {
+        document.body.requestPointerLock();
+    }
+});
+
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+document.getElementById('esc-resume')?.addEventListener('click', toggleEsc);
+document.getElementById('esc-save')?.addEventListener('click', () => {
+    showBlockIndicator('儲存功能保留中');
+    toggleEsc();
+});
+document.getElementById('esc-back')?.addEventListener('click', () => {
+    if (confirm('回到首頁會重新載入遊戲。')) {
+        location.reload();
+    }
+});
 document.getElementById('respawn-btn')?.addEventListener('click', () => {
     player.respawn();
     document.body.requestPointerLock();
 });
 
-// ====== 渲染器設定 ======
-const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
@@ -644,24 +974,20 @@ renderer.toneMappingExposure = 1.0;
 container.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x87CEEB);
-scene.fog = new THREE.Fog(0x87CEEB, 60, 120);
+scene.background = new THREE.Color(0x87ceeb);
+scene.fog = new THREE.Fog(0x87ceeb, 60, 120);
 
 const sky = createSky();
 scene.add(sky);
 
 const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 400);
 
-// 高清光影系統
-const hemi = new THREE.HemisphereLight(0x87CEEB, 0x3a2a1a, 0.6);
+const hemi = new THREE.HemisphereLight(0x87ceeb, 0x3a2a1a, 0.6);
 scene.add(hemi);
-
 const ambient = new THREE.AmbientLight(0x445566, 0.3);
 scene.add(ambient);
 
-// 日夜循環時間
-let dayTime = Math.PI / 4; // 初始時間 (早上)
-
+let dayTime = Math.PI / 4;
 const sunLightPos = new THREE.Vector3();
 const sun = new THREE.DirectionalLight(0xfff0d0, 2.5);
 sun.castShadow = true;
@@ -676,7 +1002,6 @@ sun.shadow.bias = -0.001;
 sun.shadow.radius = 4;
 scene.add(sun);
 
-// 太陽視覺
 const sunSphere = new THREE.Mesh(
     new THREE.SphereGeometry(8, 16, 16),
     new THREE.MeshBasicMaterial({ color: 0xffffee })
@@ -688,12 +1013,9 @@ const sunGlow = new THREE.Mesh(
 );
 scene.add(sunGlow);
 
-// 補光（從背面）
 const fill = new THREE.DirectionalLight(0x8899cc, 0.6);
 fill.position.set(-60, 40, -80);
 scene.add(fill);
-
-// 邊緣光
 const rim = new THREE.DirectionalLight(0xffeedd, 0.3);
 rim.position.set(0, -20, 100);
 scene.add(rim);
@@ -708,12 +1030,10 @@ const player = new Player(camera, world);
 const inventory = new Inventory(36, HOTBAR_SIZE);
 const magic = new MagicSystem(world, player, camera, scene, inventory);
 
-// ====== 全域錯誤捕捉 ======
-window.onerror = function(msg, url, line, col, error) {
-    const loadText = document.getElementById('load-text');
+window.onerror = function (msg, url, line, col, error) {
     if (loadText) {
         loadText.style.color = '#ff5555';
-        loadText.textContent = `❌ 錯誤: ${msg} (第${line}行)`;
+        loadText.textContent = `錯誤: ${msg} (${line})`;
     }
     console.error(error);
     return false;
@@ -721,13 +1041,13 @@ window.onerror = function(msg, url, line, col, error) {
 
 async function start() {
     try {
-        loadText.textContent = '初始化紋理引擎...';
+        loadText.textContent = '載入紋理中...';
         await world.init((p, txt) => {
-            loadBar.style.width = Math.round(p * 10) + '%'; // 紋理佔前 10%
+            loadBar.style.width = Math.round(p * 10) + '%';
             loadText.textContent = txt;
         });
 
-        loadText.textContent = '生成地形...';
+        loadText.textContent = '生成世界中...';
         await new Promise(r => setTimeout(r, 50));
         await new Promise(r => requestAnimationFrame(r));
 
@@ -735,16 +1055,6 @@ async function start() {
             loadBar.style.width = Math.round(10 + progress * 90) + '%';
             loadText.textContent = text + ` (${Math.round(progress * 100)}%)`;
         });
-
-        inventory.addBlock(GRASS, 8);
-        inventory.addBlock(DIRT, 16);
-        inventory.addBlock(STONE, 16);
-        inventory.addBlock(COBBLESTONE, 16);
-        inventory.addBlock(WOOD, 8);
-        inventory.addBlock(PLANKS, 16);
-        inventory.addBlock(CRAFTING_TABLE, 4);
-        inventory.addBlock(STONE_BRICK, 8);
-        inventory.addBlock(GLASS, 8);
 
         buildHotbar(world.createBlockPreview);
 
@@ -759,9 +1069,8 @@ async function start() {
 
         await new Promise(r => setTimeout(r, 400));
         loadingEl.classList.add('hidden');
-        setTimeout(() => { 
-            loadingEl.style.display = 'none'; 
-            // 啟動完成後顯示 ESC 選單，等待玩家開始
+        setTimeout(() => {
+            loadingEl.style.display = 'none';
             toggleEsc();
         }, 600);
 
@@ -776,17 +1085,22 @@ async function start() {
                 magic.update(delta);
                 magic.updateLights();
                 updateTargetBlock();
+                if (isDestroying) {
+                    updateDestroyProgress(delta);
+                }
+            } else {
+                stopDestroying();
             }
 
-            // 動態區塊載入（每 15 幀檢查一次）
             frameCount++;
             if (frameCount % 15 === 0 && isLocked) {
                 world.updateChunkLoading(player.position.x, player.position.z);
             }
 
-            // 雲朵與日夜循環動畫
+            updateDroppedItems(delta);
+
             skyUniforms.time.value += delta * 0.3;
-            dayTime += delta * 0.02; // 日夜更替速度
+            dayTime += delta * 0.02;
 
             const orbitRadius = 150;
             sunLightPos.set(
@@ -794,30 +1108,25 @@ async function start() {
                 Math.sin(dayTime) * orbitRadius,
                 50
             );
-            
-            // 將太陽光跟隨玩家（保持相對位置）
+
             sun.position.copy(player.position).add(sunLightPos);
             sun.target.position.copy(player.position);
             sun.target.updateMatrixWorld();
-            
+
             sunSphere.position.copy(player.position).add(sunLightPos);
             sunGlow.position.copy(sunSphere.position);
-            
-            sky.position.copy(player.position); // 天空盒跟隨玩家
-            
+
+            sky.position.copy(player.position);
             skyUniforms.sunDir.value.copy(sunLightPos).normalize();
-            
-            // 根據太陽高度調整光線強度與顏色
+
             const sunHeight = Math.sin(dayTime);
             if (sunHeight > 0) {
-                // 白天
                 sun.intensity = THREE.MathUtils.lerp(0, 2.5, Math.min(sunHeight * 3, 1));
                 hemi.intensity = THREE.MathUtils.lerp(0.1, 0.6, sunHeight);
                 ambient.intensity = THREE.MathUtils.lerp(0.05, 0.3, sunHeight);
                 skyUniforms.topColor.value.lerpColors(new THREE.Color(0x001133), new THREE.Color(0x0066cc), sunHeight);
-                skyUniforms.horizonColor.value.lerpColors(new THREE.Color(0x000000), new THREE.Color(0x87CEEB), sunHeight);
+                skyUniforms.horizonColor.value.lerpColors(new THREE.Color(0x000000), new THREE.Color(0x87ceeb), sunHeight);
             } else {
-                // 晚上
                 sun.intensity = 0;
                 hemi.intensity = 0.1;
                 ambient.intensity = 0.05;
@@ -831,7 +1140,7 @@ async function start() {
         }
         animate();
     } catch (err) {
-        loadText.textContent = '錯誤: ' + (err.message || err);
+        loadText.textContent = '啟動失敗: ' + (err.message || err);
         console.error(err);
     }
 }

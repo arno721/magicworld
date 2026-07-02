@@ -87,4 +87,71 @@ export class Inventory {
     getHotbarSlots() {
         return this.slots.slice(0, this.hotbarSize);
     }
+
+    getSlot(index) {
+        if (index < 0 || index >= this.size) return null;
+        return this.slots[index];
+    }
+
+    moveStack(fromSlotIndex, toSlotIndex) {
+        if (fromSlotIndex === toSlotIndex) return false;
+        if (fromSlotIndex < 0 || fromSlotIndex >= this.size || toSlotIndex < 0 || toSlotIndex >= this.size) return false;
+
+        const from = this.slots[fromSlotIndex];
+        const to = this.slots[toSlotIndex];
+        if (!from || from.count <= 0) return false;
+
+        if (to.count <= 0) {
+            this.slots[toSlotIndex] = {
+                blockType: from.blockType,
+                count: from.count,
+            };
+            this.slots[fromSlotIndex] = { blockType: AIR, count: 0 };
+            return true;
+        }
+
+        if (to.blockType === from.blockType) {
+            const canMove = Math.min(from.count, MAX_STACK - to.count);
+            if (canMove <= 0) return false;
+
+            to.count += canMove;
+            from.count -= canMove;
+            if (from.count <= 0) {
+                from.blockType = AIR;
+            }
+            return true;
+        }
+
+        const temp = { ...to };
+        this.slots[toSlotIndex] = { ...from };
+        this.slots[fromSlotIndex] = temp;
+        return true;
+    }
+
+    splitStack(fromSlotIndex, toSlotIndex, splitCount = null) {
+        if (fromSlotIndex < 0 || fromSlotIndex >= this.size || toSlotIndex < 0 || toSlotIndex >= this.size) return false;
+        if (fromSlotIndex === toSlotIndex) return false;
+
+        const from = this.slots[fromSlotIndex];
+        if (!from || from.count <= 1) return false;
+
+        const targetCount = splitCount === null ? Math.ceil(from.count / 2) : Math.min(from.count - 1, splitCount);
+        if (targetCount <= 0) return false;
+
+        if (targetCount >= from.count) return false;
+        const to = this.slots[toSlotIndex];
+        if (to.count > 0 && to.blockType !== from.blockType) return false;
+        if (to.count >= MAX_STACK) return false;
+
+        const placeCount = Math.min(targetCount, MAX_STACK - to.count);
+        if (placeCount <= 0) return false;
+
+        to.blockType = from.blockType;
+        to.count += placeCount;
+        from.count -= placeCount;
+        if (from.count <= 0) {
+            from.blockType = AIR;
+        }
+        return true;
+    }
 }

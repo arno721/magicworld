@@ -1,4 +1,3 @@
-// 世界與方塊常量
 export const CHUNK_SIZE = 16;
 export const WORLD_HEIGHT = 128;
 export const GRAVITY = 28;
@@ -8,10 +7,16 @@ export const PLAYER_WIDTH = 0.6;
 export const PLAYER_HEIGHT = 1.75;
 export const PLAYER_EYE_HEIGHT = 1.6;
 export const REACH_DISTANCE = 7;
+export const FALL_DAMAGE_MIN_HEIGHT = 3.5;
+export const FALL_DAMAGE_PER_BLOCK = 2;
+export const FALL_DAMAGE_MAX = 10;
+export const VOID_DAMAGE = 2;
+export const STARVATION_DAMAGE = 1;
+export const STARVATION_INTERVAL = 2.0;
 export const PLAYER_HALF_W = PLAYER_WIDTH / 2;
 export const HOTBAR_SIZE = 9;
+export const DEFAULT_TEXTURE_RESOLUTION = 1024;
 
-// 方塊類型
 export const AIR = 0;
 export const GRASS = 1;
 export const DIRT = 2;
@@ -35,23 +40,65 @@ export const WATER = 19;
 export const CRAFTING_TABLE = 20;
 export const FURNACE = 21;
 
-// 透明方塊（不遮擋相鄰面）
 export const TRANSPARENT_BLOCKS = new Set([AIR, LEAVES, GLASS]);
 
-// 物品類型（非方塊，可存在物品欄但不能放置）
 export const STICK = 100;
 export const COAL = 101;
 
-// 方塊名稱
-export const BLOCK_NAMES = {
-    [GRASS]: '草方塊', [DIRT]: '泥土', [STONE]: '石頭', [WOOD]: '原木',
-    [LEAVES]: '樹葉', [SAND]: '沙子', [PLANKS]: '木材', [COBBLESTONE]: '鵝卵石',
-    [BRICK]: '磚塊', [GRAVEL]: '礫石', [SNOW]: '雪',
-    [COAL_ORE]: '煤礦', [IRON_ORE]: '鐵礦', [GOLD_ORE]: '金礦', [DIAMOND_ORE]: '鑽石礦',
-    [BEDROCK]: '基岩', [GLASS]: '玻璃', [STONE_BRICK]: '石磚', [WATER]: '水',
-    [CRAFTING_TABLE]: '工作台', [FURNACE]: '熔爐',
-    [STICK]: '木棒', [COAL]: '木炭',
+// 方塊破壞秒數：同一方塊需累積多久才能被打掉
+export const BLOCK_HARDNESS = {
+    [AIR]: Number.POSITIVE_INFINITY,
+    [GRASS]: 0.55,
+    [DIRT]: 0.55,
+    [STONE]: 1.2,
+    [WOOD]: 0.9,
+    [LEAVES]: 0.25,
+    [SAND]: 0.75,
+    [PLANKS]: 0.8,
+    [COBBLESTONE]: 1.1,
+    [BRICK]: 1.05,
+    [GRAVEL]: 1.1,
+    [SNOW]: 0.3,
+    [COAL_ORE]: 1.4,
+    [IRON_ORE]: 1.8,
+    [GOLD_ORE]: 1.9,
+    [DIAMOND_ORE]: 2.2,
+    [BEDROCK]: Number.POSITIVE_INFINITY,
+    [WATER]: 0.2,
+    [GLASS]: 0.45,
+    [STONE_BRICK]: 1.2,
+    [CRAFTING_TABLE]: 1.0,
+    [FURNACE]: 1.7,
 };
 
-// 初始快捷欄方塊
+export const PICKUP_RADIUS = 1.8;
+export const DROPPED_ITEM_LIFETIME = 60;
+export const DROPPED_ITEM_GRAVITY = 18;
+
+export const BLOCK_NAMES = {
+    [GRASS]: '草方塊',
+    [DIRT]: '土方塊',
+    [STONE]: '石頭',
+    [WOOD]: '木頭',
+    [LEAVES]: '樹葉',
+    [SAND]: '沙',
+    [PLANKS]: '木板',
+    [COBBLESTONE]: '鵝卵石',
+    [BRICK]: '磚塊',
+    [GRAVEL]: '礫石',
+    [SNOW]: '雪',
+    [COAL_ORE]: '煤礦',
+    [IRON_ORE]: '鐵礦',
+    [GOLD_ORE]: '金礦',
+    [DIAMOND_ORE]: '鑽石礦',
+    [BEDROCK]: '基岩',
+    [GLASS]: '玻璃',
+    [STONE_BRICK]: '石磚',
+    [WATER]: '水',
+    [CRAFTING_TABLE]: '工作台',
+    [FURNACE]: '熔爐',
+    [STICK]: '木棍',
+    [COAL]: '煤炭',
+};
+
 export const HOTBAR_BLOCKS = [GRASS, DIRT, STONE, COBBLESTONE, WOOD, PLANKS, CRAFTING_TABLE, STONE_BRICK, GLASS];

@@ -1,5 +1,22 @@
 import * as THREE from 'three';
-import { GRAVITY, JUMP_VELOCITY, MOVE_SPEED, PLAYER_WIDTH, PLAYER_HEIGHT, PLAYER_EYE_HEIGHT, PLAYER_HALF_W, AIR, LEAVES, WORLD_HEIGHT } from './constants.js';
+import {
+    GRAVITY,
+    JUMP_VELOCITY,
+    MOVE_SPEED,
+    PLAYER_WIDTH,
+    PLAYER_HEIGHT,
+    PLAYER_EYE_HEIGHT,
+    PLAYER_HALF_W,
+    AIR,
+    LEAVES,
+    WORLD_HEIGHT,
+    FALL_DAMAGE_MIN_HEIGHT,
+    FALL_DAMAGE_PER_BLOCK,
+    FALL_DAMAGE_MAX,
+    VOID_DAMAGE,
+    STARVATION_DAMAGE,
+    STARVATION_INTERVAL,
+} from './constants.js';
 
 export class Player {
     constructor(camera, world) {
@@ -21,6 +38,7 @@ export class Player {
         this.foodTimer = 0;
         this.damageTimer = 0;
         this.respawnPos = new THREE.Vector3(0, 80, 0);
+        this.resetFallState();
     }
 
     getAABB(pos) {
@@ -84,7 +102,14 @@ export class Player {
         this.onGround = false;
         this.position.copy(this.respawnPos);
         this.camera.position.set(this.position.x, this.position.y + PLAYER_EYE_HEIGHT, this.position.z);
+        this.resetFallState();
         document.getElementById('death-screen').style.display = 'none';
+    }
+
+    resetFallState() {
+        this.fallStartY = this.position.y;
+        this.onGround = false;
+        this.wasOnGround = false;
     }
 
     update(deltaTime, input) {
@@ -110,8 +135,8 @@ export class Player {
         if (this.food <= 0) {
             if (!this.starveTimer) this.starveTimer = 0;
             this.starveTimer += dt;
-            if (this.starveTimer > 2.0) { // 每 2 秒扣 1 血
-                this.damage(1);
+            if (this.starveTimer > STARVATION_INTERVAL) { // 每 2 秒扣 1 血
+                this.damage(STARVATION_DAMAGE);
                 this.starveTimer = 0;
             }
         } else {
@@ -166,8 +191,12 @@ export class Player {
             if (this.velocity.y < 0) {
                 // 掉落傷害
                 const fallDist = this.fallStartY - newPos.y;
-                if (fallDist > 3.5 && !this.wasOnGround) {
-                    this.damage(Math.floor((fallDist - 3)));
+                const fallDamage = Math.min(
+                    FALL_DAMAGE_MAX,
+                    Math.floor((fallDist - FALL_DAMAGE_MIN_HEIGHT) / FALL_DAMAGE_PER_BLOCK)
+                );
+                if (fallDamage > 0 && !this.wasOnGround) {
+                    this.damage(fallDamage);
                 }
                 newPos.y = Math.floor(this.position.y);
                 aabb = this.getAABB(new THREE.Vector3(newPos.x, newPos.y, newPos.z));
@@ -218,11 +247,12 @@ export class Player {
         newPos.y = Math.max(0, Math.min(WORLD_HEIGHT + 10, newPos.y));
 
         if (newPos.y < -10) {
-            this.damage(2); // 減少虛空掉落的瞬殺機率
+            this.damage(VOID_DAMAGE); // 減少虛空掉落的瞬殺機率
             if (this.alive) {
                 newPos.set(0, 100, 0); // 重生在高一點的地方
                 this.velocity.set(0, 0, 0);
                 this.onGround = false;
+                this.resetFallState();
             }
         }
 

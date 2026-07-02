@@ -306,6 +306,7 @@ export class MagicSystem {
         this.player.position.copy(target);
         this.player.velocity.set(0, 0, 0);
         this.player.camera.position.set(target.x, target.y + 1.6, target.z);
+        this.player.resetFallState();
 
         this.showMessage('⚡ 瞬間移動');
     }
